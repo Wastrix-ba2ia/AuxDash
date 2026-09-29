@@ -1,0 +1,17 @@
+*.exe
+*.dll
+*.pdb
+*.xml
+*.log
+*.bin
+*.tmp
+.env*
+auth.json
+*.jsonl
+*-status.txt
+/assets/*
+!/assets/pet-subtitles.json
+/sensors/
+/dist/
+/*.png
+/*.jpg
