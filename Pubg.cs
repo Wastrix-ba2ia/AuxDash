@@ -87,14 +87,14 @@ namespace SideScreenMonitor {
             Mood = Busy ? "忙碌" : running ? "游戏陪伴" : "安静陪伴";
         }
     }
-    public sealed class PubgSettingsForm : Form {
+    public sealed class PubgSettingsForm : PrimarySettingsForm {
         public readonly PubgProfile Profile;
         readonly TextBox nickname = new TextBox(), key = new TextBox();
         readonly Label status = new Label();
         readonly Button verify = new Button(), save = new Button();
         bool checking;
         public PubgSettingsForm(PubgProfile profile) {
-            Profile = profile; Text = "Steam PUBG · 绑定设置"; ClientSize = new Size(540, 280); FormBorderStyle = FormBorderStyle.FixedDialog; StartPosition = FormStartPosition.CenterScreen; MaximizeBox = false; MinimizeBox = false;
+            Profile = profile; Text = "Steam PUBG · 绑定设置"; ClientSize = new Size(540, 280); FormBorderStyle = FormBorderStyle.FixedDialog; StartPosition = FormStartPosition.Manual; MaximizeBox = false; MinimizeBox = false;
             Controls.Add(new Label { Text = "游戏昵称（Steam PUBG）", Left = 20, Top = 18, Width = 400 });
             nickname.SetBounds(20, 45, 495, 26); nickname.Text = profile.Nickname; Controls.Add(nickname);
             Controls.Add(new Label { Text = "PUBG API 密钥（仅保存在本机，留空使用已保存密钥）", Left = 20, Top = 82, Width = 500 });

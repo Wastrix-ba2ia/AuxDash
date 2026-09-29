@@ -1,10 +1,16 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Drawing;
 using System.Windows.Forms;
 using System.Xml.Linq;
 using System.Threading.Tasks;
 namespace SideScreenMonitor {
+ public class PrimarySettingsForm:Form {
+  public PrimarySettingsForm(){StartPosition=FormStartPosition.Manual;CenterOnPrimary();}
+  void CenterOnPrimary(){var area=Screen.PrimaryScreen.WorkingArea;Location=new Point(area.Left+Math.Max(0,(area.Width-Width)/2),area.Top+Math.Max(0,(area.Height-Height)/2));}
+  protected override void OnLoad(EventArgs e){base.OnLoad(e);CenterOnPrimary();}
+  protected override void OnShown(EventArgs e){base.OnShown(e);CenterOnPrimary();Activate();}
+ }
  public sealed class BindingConfig {
   public bool CodexEnabled=true;
   public string Home="",Executable="";
@@ -13,11 +19,11 @@ namespace SideScreenMonitor {
   public static BindingConfig Load(){var c=new BindingConfig();try {var x=ProfileStorage.Read(FileName);c.Home=(string)x.Element("CodexHome")??"";c.Executable=(string)x.Element("CodexExecutable")??"";c.CodexEnabled=(bool?)x.Element("CodexEnabled")??true;}catch{}return c;}
   public bool Save(){return ProfileStorage.Write(FileName,new XElement("Bindings",new XElement("CodexHome",Home),new XElement("CodexExecutable",Executable),new XElement("CodexEnabled",CodexEnabled)));}
  }
- public sealed class BindingSettingsForm:Form {
+ public sealed class BindingSettingsForm:PrimarySettingsForm {
   public BindingConfig Config;
   readonly TextBox home=new TextBox(),exe=new TextBox();readonly CheckBox enabled=new CheckBox();readonly Label status=new Label();
   public BindingSettingsForm(PubgProfile pubg) {
-   Config=BindingConfig.Load();Text="账号与联动绑定";ClientSize=new Size(640,410);AutoScaleMode=AutoScaleMode.Dpi;StartPosition=FormStartPosition.CenterScreen;FormBorderStyle=FormBorderStyle.FixedDialog;MaximizeBox=false;MinimizeBox=false;
+   Config=BindingConfig.Load();Text="账号与联动绑定";ClientSize=new Size(640,410);AutoScaleMode=AutoScaleMode.Dpi;StartPosition=FormStartPosition.Manual;FormBorderStyle=FormBorderStyle.FixedDialog;MaximizeBox=false;MinimizeBox=false;
    enabled.Text="启用 Codex 本机联动与额度显示";enabled.SetBounds(20,16,580,28);enabled.Checked=Config.CodexEnabled;Controls.Add(enabled);
    Controls.Add(new Label {Text="先在官方 Codex 登录。本软件不接收账号密码或登录令牌。",Left=20,Top=50,Width=600,Height=24});
    Controls.Add(new Label {Text="Codex 数据目录（包含 sessions；留空自动查找）",Left=20,Top=82,Width=590});home.SetBounds(20,108,510,26);home.Text=Config.Home;Controls.Add(home);
