@@ -2,6 +2,14 @@
 
 Windows x64 原生 WinForms 副屏仪表盘，推荐 1920×480。托盘运行，不依赖 Codex 启动。
 
+## 界面预览
+
+实际 Windows 程序截图，硬件读数随电脑变化。设置窗口在主显示器打开。
+
+![副屏仪表盘与人物动画](docs/screenshots/dashboard.png)
+
+![Codex 与 PUBG 绑定入口](docs/screenshots/bindings.png)
+
 ## 下载完整运行版
 
 前往 [Releases](https://github.com/Wastrix-ba2ia/AuxDash/releases/latest)，下载 **AuxDash-windows-x64-full.zip**，完整解压后运行“副屏监控.exe”。
