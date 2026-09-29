@@ -1,6 +1,14 @@
-# Neon Side Screen Monitor
+﻿# AuxDash
 
 Windows x64 原生 WinForms 副屏仪表盘，推荐 1920×480。托盘运行，不依赖 Codex 启动。
+
+## 下载完整运行版
+
+前往 [Releases](https://github.com/Wastrix-ba2ia/AuxDash/releases/latest)，下载 **AuxDash-windows-x64-full.zip**，完整解压后运行“副屏监控.exe”。
+
+完整运行包内置 4 种待机、32 种常规动作以及屏幕唤醒 APT 改编动画，无需火山 API 或重新生成。Codex / PUBG 由每位用户在托盘绑定设置中自行配置；未绑定时也可播放本机动画。完整包默认关闭 Codex 联动和自动内存清理。
+
+GitHub 的“Source code”ZIP 仅有源码，不含人物动画，请普通用户下载上面的完整运行包。
 
 ## 构建
 
