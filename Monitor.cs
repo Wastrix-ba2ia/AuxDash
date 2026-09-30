@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -112,11 +112,12 @@ namespace SideScreenMonitor {
     public sealed class Settings {
         public string Monitor = "", Art = "";
         public bool Topmost = true, PetBubbles;
-        public bool AutoMemoryClean=true;
+        public bool AutoMemoryClean=true; public bool MusicLink=true;
+        public string WeatherName="长春", WeatherTimeZone="Asia/Shanghai";public double WeatherLatitude=43.88,WeatherLongitude=125.32278;
         public DateTime GreetingDay=DateTime.MinValue;
         static string FileName { get { return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "settings.xml"); } }
-        public static Settings Load() { var s = new Settings(); try { var r = XElement.Load(FileName); s.Monitor = (string)r.Element("Monitor") ?? ""; s.Art = (string)r.Element("Art") ?? ""; s.Topmost = (bool?)r.Element("Topmost") ?? true; s.AutoMemoryClean=(bool?)r.Element("AutoMemoryClean")??true;s.PetBubbles=(bool?)r.Element("PetBubbles")??false;s.GreetingDay=(DateTime?)r.Element("GreetingDay")??DateTime.MinValue; } catch { } return s; }
-        public void Save() { try { new XElement("Settings", new XElement("AutoMemoryClean",AutoMemoryClean),new XElement("Monitor", Monitor), new XElement("Art", Art), new XElement("PetBubbles",PetBubbles),new XElement("GreetingDay",GreetingDay),new XElement("Topmost", Topmost)).Save(FileName); } catch { } }
+        public static Settings Load() { var s = new Settings(); try { var r = XElement.Load(FileName); s.Monitor = (string)r.Element("Monitor") ?? ""; s.Art = (string)r.Element("Art") ?? ""; s.Topmost = (bool?)r.Element("Topmost") ?? true; s.MusicLink=(bool?)r.Element("MusicLink")??true;s.WeatherName=(string)r.Element("WeatherName")??"长春";s.WeatherTimeZone=(string)r.Element("WeatherTimeZone")??"Asia/Shanghai";s.WeatherLatitude=(double?)r.Element("WeatherLatitude")??43.88;s.WeatherLongitude=(double?)r.Element("WeatherLongitude")??125.32278;s.AutoMemoryClean=(bool?)r.Element("AutoMemoryClean")??true;s.PetBubbles=(bool?)r.Element("PetBubbles")??false;s.GreetingDay=(DateTime?)r.Element("GreetingDay")??DateTime.MinValue; } catch { } return s; }
+        public void Save() { try { new XElement("Settings", new XElement("WeatherName",WeatherName),new XElement("WeatherTimeZone",WeatherTimeZone),new XElement("WeatherLatitude",WeatherLatitude),new XElement("WeatherLongitude",WeatherLongitude),new XElement("MusicLink",MusicLink),new XElement("AutoMemoryClean",AutoMemoryClean),new XElement("Monitor", Monitor), new XElement("Art", Art), new XElement("PetBubbles",PetBubbles),new XElement("GreetingDay",GreetingDay),new XElement("Topmost", Topmost)).Save(FileName); } catch { } }
     }
     public sealed class Dashboard : Form {
         readonly Settings settings;
@@ -135,7 +136,7 @@ namespace SideScreenMonitor {
         Rectangle windowBounds;
         DateTime lastGood = DateTime.MinValue;
         readonly bool preview;
-        WeatherReading weather = WeatherClient.LoadCache();
+        WeatherReading weather;
         int weatherBusy, quotaBusy;
         CodexQuota quota; DateTime nextQuota=DateTime.MinValue; bool quotaFailed;
         DateTime nextWeather = DateTime.MinValue;
@@ -143,6 +144,18 @@ namespace SideScreenMonitor {
         readonly CompanionState companion = new CompanionState();
         readonly PetRules petRules = new PetRules();
         readonly PetVideo petVideo = new PetVideo();
+        readonly MusicSessions musicSessions=new MusicSessions();readonly MusicGate musicGate=new MusicGate();
+        readonly Random musicRandom=new Random();DateTime nextMusic;string lastMusic="";
+        void CheckMusic(){
+            bool blocked=detectedGame || displayWasOff || !settings.MusicLink || !animation.Enabled || !petRules.AutoPerform || petRules.State=="开会" || PetSubtitles.Warning(petRules.State);
+            bool active=musicGate.Update(!blocked && musicSessions.Poll(),blocked,DateTime.UtcNow);
+            petVideo.SetMusicBlocked(blocked);
+            if(!active){petVideo.CancelMusic();nextMusic=DateTime.MinValue;return;}
+            if(DateTime.UtcNow<nextMusic || petVideo.CodexState!="idle" || petVideo.ActiveClip!=null || petVideo.PendingClip!=null)return;
+            var available=new List<string>();foreach(string state in new[]{"空气吉他","偶像应援","兔兔跳","慢歌摇摆"})if(state!=lastMusic && petVideo.HasAction(state))available.Add(state);
+            if(available.Count==0)return;
+            string action=available[musicRandom.Next(available.Count)];petVideo.QueueMusic(action);lastMusic=action;nextMusic=DateTime.UtcNow.AddSeconds(40+musicRandom.Next(26));
+        }
         readonly PetSubtitles petSubtitles=new PetSubtitles();
         CodexActivity codexActivity = new CodexActivity();
         int activityBusy; bool activityEnabled=true; string activityDiagnostic="";
@@ -157,7 +170,7 @@ namespace SideScreenMonitor {
             });}catch{}finally{Interlocked.Exchange(ref activityBusy,0);}});
         }
         public Dashboard(bool previewMode) {
-            preview = previewMode; activityEnabled=BindingConfig.Load().CodexEnabled; animation.Effects=false; settings = Settings.Load();petVideo.ShowBubbles=settings.PetBubbles;petRules.LastGreetingDay=settings.GreetingDay;
+            preview = previewMode; activityEnabled=BindingConfig.Load().CodexEnabled; animation.Effects=false; settings = Settings.Load();weather=WeatherClient.LoadCache(settings.WeatherLatitude,settings.WeatherLongitude,settings.WeatherName,settings.WeatherTimeZone);petVideo.ShowBubbles=settings.PetBubbles;petRules.LastGreetingDay=settings.GreetingDay;
             ShowInTaskbar=false;
             Text = "NEON / 副屏监控"; BackColor = Color.FromArgb(24, 20, 38);
             DoubleBuffered = true; ResizeRedraw = true; KeyPreview = true; AutoScaleMode = AutoScaleMode.None;
@@ -175,10 +188,10 @@ namespace SideScreenMonitor {
                 trayIcon=new NotifyIcon {Text="副屏监控",Icon=robotIcon,ContextMenuStrip=ContextMenuStrip,Visible=true};
                 trayIcon.DoubleClick+=delegate {RestoreDashboard();};
             }
-            timer.Interval = 1000; timer.Tick += delegate { ticks++; BeginQuota(); BeginActivity(); KeepOnSecondaryScreen(); BeginSample(); BeginWeather(); Invalidate(); };
+            timer.Interval = 1000; timer.Tick += delegate { ticks++; CheckGame(); CheckMusic(); BeginQuota(); BeginActivity(); KeepOnSecondaryScreen(); BeginSample(); BeginWeather(); Invalidate(); };
             animationTimer.Interval = 33; animationTimer.Tick += delegate { if (animation.Enabled && (petVideo.Available || animation.Available) && !displayWasOff && WindowState != FormWindowState.Minimized) Invalidate(new Rectangle(0, 0, (int)Math.Ceiling(ClientSize.Width * 421f / 1110f), ClientSize.Height)); };
             if (!preview) animationTimer.Start();
-            Shown += delegate { if (!preview) { MoveToPreferredScreen(); timer.Start(); BeginSample(); BeginInvoke((Action)SaveWindowDiagnostics); BeginInvoke((Action)StartCpuSensors); BeginInvoke((Action)animation.Greet); } };
+            Shown += delegate { if (!preview) { MoveToPreferredScreen(); timer.Start(); CheckGame(); BeginSample(); BeginInvoke((Action)SaveWindowDiagnostics); BeginInvoke((Action)StartCpuSensors); BeginInvoke((Action)animation.Greet); } };
             KeyDown += OnKey;
             MouseDown += delegate(object sender, MouseEventArgs e) { if(e.Button==MouseButtons.Left && !fullscreen) { ReleaseCapture();SendMessage(Handle,0xA1,new IntPtr(2),IntPtr.Zero); } };
             // Fullscreen changes are explicit via F11/menu; accidental double-clicks cannot move the dashboard.
@@ -194,7 +207,7 @@ namespace SideScreenMonitor {
         [DllImport("user32.dll")] static extern uint GetDpiForWindow(IntPtr h);
         void SaveWindowDiagnostics() { try { RECT r; GetWindowRect(Handle, out r); new XElement("Window", new XElement("ShowInTaskbar",ShowInTaskbar),new XElement("TrayVisible",trayIcon!=null && trayIcon.Visible),new XElement("Display", PreferredScreen().DeviceName), new XElement("X", r.Left), new XElement("Y", r.Top), new XElement("Width", r.Right-r.Left), new XElement("Height", r.Bottom-r.Top), new XElement("DPI", GetDpiForWindow(Handle)), new XElement("ClientWidth", ClientSize.Width), new XElement("ClientHeight", ClientSize.Height)).Save(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "window-check.xml")); } catch { } }
         static Image LoadImage(string path) { using (var img = Image.FromFile(path)) return new Bitmap(img); }
-        protected override void Dispose(bool disposing) { if (disposing) { if(trayIcon!=null){trayIcon.Visible=false;trayIcon.Dispose();trayIcon=null;} if(robotIcon!=null){robotIcon.Dispose();robotIcon=null;} timer.Dispose(); animationTimer.Dispose(); animation.Dispose(); petVideo.Dispose(); if (reference != null) reference.Dispose(); if (customArt != null) customArt.Dispose(); } base.Dispose(disposing); }
+        protected override void Dispose(bool disposing) { if (disposing) { if(trayIcon!=null){trayIcon.Visible=false;trayIcon.Dispose();trayIcon=null;} if(robotIcon!=null){robotIcon.Dispose();robotIcon=null;} musicSessions.Dispose(); timer.Dispose(); animationTimer.Dispose(); animation.Dispose(); petVideo.Dispose(); if (reference != null) reference.Dispose(); if (customArt != null) customArt.Dispose(); } base.Dispose(disposing); }
         DateTime lastWakeDance=DateTime.MinValue;
         IntPtr displayPowerNotification;
         bool displayWasOff;
@@ -245,6 +258,12 @@ namespace SideScreenMonitor {
             var displays = new ToolStripMenuItem("移动到显示器");
             foreach (var display in Screen.AllScreens) { var captured = display; displays.DropDownItems.Add(display.DeviceName + "  " + display.Bounds.Width + " × " + display.Bounds.Height + (display.Primary ? "  主屏" : "  副屏"), null, delegate { settings.Monitor = captured.DeviceName; settings.Save(); if (!fullscreen) windowBounds = new Rectangle(captured.WorkingArea.Location, Size); SetFullscreen(true); }); }
             menu.Items.Add(displays);
+            var startup=new ToolStripMenuItem("开机启动（当前 Windows 用户）"){Checked=StartupManager.IsEnabled(),CheckOnClick=true};
+            startup.CheckedChanged+=delegate{
+                try{StartupManager.SetEnabled(startup.Checked);}
+                catch(Exception ex){startup.Checked=StartupManager.IsEnabled();MessageBox.Show(this,"无法更改开机启动项："+ex.Message,"设置失败",MessageBoxButtons.OK,MessageBoxIcon.Warning);}
+            };
+            menu.Items.Add(startup);
             var top = new ToolStripMenuItem("始终置顶") { Checked = settings.Topmost, CheckOnClick = true }; top.CheckedChanged += delegate { TopMost = settings.Topmost = top.Checked; settings.Save(); }; menu.Items.Add(top);
             menu.Items.Add(new ToolStripSeparator());
             var moves = new ToolStripMenuItem("机器人动作");
@@ -259,6 +278,8 @@ namespace SideScreenMonitor {
             var autoMoves = new ToolStripMenuItem("副屏自动互动（无需点击）") { Checked = animation.AutoPerform, CheckOnClick = true };
             autoMoves.CheckedChanged += delegate { animation.AutoPerform = autoMoves.Checked; petRules.AutoPerform=autoMoves.Checked; };
             moves.DropDownItems.Add(autoMoves);
+            var musicLink=new ToolStripMenuItem("音乐联动（系统标记为音乐时）"){Checked=settings.MusicLink,CheckOnClick=true};
+            musicLink.CheckedChanged+=delegate{settings.MusicLink=musicLink.Checked;settings.Save();CheckMusic();};moves.DropDownItems.Add(musicLink);
             moves.DropDownItems.Add("忙碌情绪提示", null, delegate { petRules.Request("忙碌",DateTime.Now); });
             var bubbles=new ToolStripMenuItem("短气泡（3 秒自动消失）") {Checked=settings.PetBubbles,CheckOnClick=true};
             bubbles.CheckedChanged+=delegate {petVideo.ShowBubbles=settings.PetBubbles=bubbles.Checked;settings.Save();};moves.DropDownItems.Add(bubbles);
@@ -276,16 +297,26 @@ namespace SideScreenMonitor {
             }
             menu.Items.Add(interactions);
             var pubgMenu = new ToolStripMenuItem("PUBG 陪玩 · " + pubg.Nickname);
+            var gameStatus=new ToolStripMenuItem {Enabled=false};pubgMenu.DropDownItems.Add(gameStatus);
+            pubgMenu.DropDownOpening+=delegate {gameStatus.Text=detectedGame?"已检测到 PUBG 游戏进程":"未检测到 PUBG（仅启动 Steam 不触发）";};
             var enabled = new ToolStripMenuItem("显示陪玩状态") { Checked = pubg.Enabled, CheckOnClick = true };
             enabled.CheckedChanged += delegate { pubg.Enabled = enabled.Checked; if (!pubg.Save()) MessageBox.Show(this, "本次设置已生效，但配置暂时被占用，未能保存到磁盘。", "配置保存提示"); Invalidate(); }; pubgMenu.DropDownItems.Add(enabled);
             pubgMenu.DropDownItems.Add("昵称 / 官方接口绑定…", null, delegate { using (var dialog = new PubgSettingsForm(pubg)) dialog.ShowDialog(this); pubgMenu.Text = "PUBG 陪玩 · " + pubg.Nickname; Invalidate(); });
+            pubgMenu.DropDownItems.Add("开始本局 · 戴盔出击",null,delegate {petVideo.PreviewAction("战术出击");});
             pubgMenu.DropDownItems.Add("鼓励我", null, delegate { petRules.Request("打招呼",DateTime.Now); companion.Say("稳住节奏，先做好眼前这一步。", DateTime.Now); Invalidate(); });
             pubgMenu.DropDownItems.Add("庆祝一下（手动）", null, delegate { petRules.Request("比心",DateTime.Now); companion.Say("这一下漂亮！为你庆祝。", DateTime.Now); Invalidate(); });
             pubgMenu.DropDownItems.Add("这局可惜了（手动）", null, delegate { companion.Say("可惜了，休息一下，下局再来。", DateTime.Now); Invalidate(); });
             menu.Items.Add(pubgMenu);
             var cleanMemory=new ToolStripMenuItem("内存超过 80% 自动清理") {Checked=settings.AutoMemoryClean,CheckOnClick=true};
             cleanMemory.CheckedChanged+=delegate {settings.AutoMemoryClean=cleanMemory.Checked;settings.Save();};menu.Items.Add(cleanMemory);
-            menu.Items.Add("刷新长春天气", null, delegate { nextWeather = DateTime.MinValue; BeginWeather(); });
+            menu.Items.Add("天气地区…",null,delegate {
+                var current=new WeatherClient.Location{Name=settings.WeatherName,Latitude=settings.WeatherLatitude,Longitude=settings.WeatherLongitude,TimeZone=settings.WeatherTimeZone};
+                using(var dialog=new WeatherLocationForm(current))if(dialog.ShowDialog(this)==DialogResult.OK && dialog.Selected!=null){
+                    settings.WeatherName=dialog.Selected.ToString();settings.WeatherLatitude=dialog.Selected.Latitude;settings.WeatherLongitude=dialog.Selected.Longitude;settings.WeatherTimeZone=dialog.Selected.TimeZone;settings.Save();
+                    weather=WeatherClient.LoadCache(settings.WeatherLatitude,settings.WeatherLongitude,settings.WeatherName,settings.WeatherTimeZone);nextWeather=DateTime.MinValue;BeginWeather();Invalidate();
+                }
+            });
+            menu.Items.Add("刷新天气", null, delegate { nextWeather = DateTime.MinValue; BeginWeather(); });
             menu.Items.Add("启用 / 重试 CPU 温度采集", null, delegate { StartCpuSensors(); });
             menu.Items.Add("更换左侧图片    F2", null, delegate { ChangeArt(); });
             menu.Items.Add("恢复机器人动画", null, delegate { if (customArt != null) { customArt.Dispose(); customArt = null; } settings.Art = ""; settings.Save(); Invalidate(); });
@@ -307,8 +338,17 @@ namespace SideScreenMonitor {
         }
         [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
         [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr window,out uint pid);
+        bool detectedGame;string lastGameDiagnostic="";
+        void CheckGame() {
+            try {detectedGame=PubgApi.IsRunning();}catch{return;}
+            petVideo.SetMusicBlocked(detectedGame);
+            petVideo.ObserveGame(pubg.Enabled && detectedGame);
+            string status="process="+(detectedGame?"TslGame":"not detected")+"; enabled="+pubg.Enabled+"; clip="+(petVideo.ActiveClip??"none")+"; pending="+(petVideo.PendingClip??"none");
+            if(status!=lastGameDiagnostic){lastGameDiagnostic=status;try {File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"pubg-trigger-status.txt"),DateTime.Now.ToString("s")+" "+status);}catch(IOException){}}
+        }
         void UpdatePet(Reading next) {
-            var signal=new PetSignals { Cpu=next.Cpu, Temperature=next.CpuTemp, Memory=next.Memory, Vram=next.VramPercent, IdleSeconds=PetRules.IdleSeconds(), Download=next.Download, Game=next.PubgRunning };
+
+            var signal=new PetSignals { Cpu=next.Cpu, Temperature=next.CpuTemp, Memory=next.Memory, Vram=next.VramPercent, IdleSeconds=PetRules.IdleSeconds(), Download=next.Download, Game=pubg.Enabled && detectedGame };
             try { var drive=new DriveInfo(Path.GetPathRoot(Environment.SystemDirectory));signal.DiskFree=100.0*drive.AvailableFreeSpace/drive.TotalSize; }catch{}
             var power=SystemInformation.PowerStatus;
             signal.OnBattery=power.PowerLineStatus==PowerLineStatus.Offline && (power.BatteryChargeStatus&BatteryChargeStatus.NoSystemBattery)==0;
@@ -336,7 +376,7 @@ namespace SideScreenMonitor {
             if (DateTime.UtcNow < nextWeather || Interlocked.Exchange(ref weatherBusy, 1) == 1) return;
             nextWeather = DateTime.UtcNow.AddMinutes(15);
             Task.Run(delegate {
-                try { var next = WeatherClient.Fetch(); if (!IsDisposed && IsHandleCreated) BeginInvoke((Action)delegate { weather = next; Invalidate(); }); }
+                try { var next = WeatherClient.Fetch(settings.WeatherLatitude,settings.WeatherLongitude,settings.WeatherName,settings.WeatherTimeZone); if (!IsDisposed && IsHandleCreated) BeginInvoke((Action)delegate { weather = next; Invalidate(); }); }
                 catch { if (!IsDisposed && IsHandleCreated) BeginInvoke((Action)delegate { if (weather != null) weather.Cached = true; nextWeather = DateTime.UtcNow.AddMinutes(2); Invalidate(); }); }
                 finally { Interlocked.Exchange(ref weatherBusy, 0); }
             });
@@ -427,9 +467,9 @@ namespace SideScreenMonitor {
             using (var b = new LinearGradientBrush(new Rectangle(422, 291, 688, 23), Color.FromArgb(89, 49, 92), Color.FromArgb(26, 35, 50), 0f)) g.FillRectangle(b, 422, 291, 688, 23);
             var weatherClip=g.Save();g.SetClip(new RectangleF(429,292,548,22));
             DateTime weatherNow=DateTime.UtcNow.AddHours(8);
-            bool currentWeather=weather!=null && weather.Day.Date==weatherNow.Date && (weatherNow-weather.Observed).TotalHours<=2 && weather.Observed<=weatherNow.AddMinutes(30);
+            bool currentWeather=weather!=null && weather.IsCurrent;
             DrawWeatherIcon(g,432,294,currentWeather?weather.Code:-1);
-            TextAt(g, weather == null ? "吉林长春  天气正在连接…" : weather.Summary(), 457, 295, 12, Color.FromArgb(244, 239, 250), "Microsoft YaHei UI", FontStyle.Regular);
+            TextAt(g, weather == null ? settings.WeatherName+"  天气正在连接…" : weather.Summary(), 457, 295, 12, Color.FromArgb(244, 239, 250), "Microsoft YaHei UI", FontStyle.Regular);
             g.Restore(weatherClip);
             string state = lastGood == DateTime.MinValue ? "CONNECTING" : (DateTime.Now - lastGood).TotalSeconds > 8 ? "STALE DATA" : "LIVE  /  " + reading.Timestamp.ToString("HH:mm:ss");
             TextAt(g, "Open-Meteo" + (weather == null ? "" : " " + weather.Observed.ToString("HH:mm")), 991, 294, 8, Color.FromArgb(217, 239, 245), "Bahnschrift", FontStyle.Regular);
@@ -485,7 +525,7 @@ namespace SideScreenMonitor {
             }
             g.Restore(saved);
         }
-        public void Snapshot(string path) { try { quota=CodexQuota.Fetch(); } catch {quotaFailed=true;} try { weather = WeatherClient.Fetch(); } catch { } reading = sensors.Poll(); Thread.Sleep(1100); reading = sensors.Poll(); lastGood = DateTime.Now; Push(cpuHistory, reading.Cpu); Push(gpuHistory, Math.Max(0, reading.Gpu)); using (var b = new Bitmap(1920, 480)) { using (var g = Graphics.FromImage(b)) Render(g, 1920, 480); b.Save(path, ImageFormat.Png); } var xml = new XElement("Diagnostics", new XElement("CPU", reading.CpuName), new XElement("CPULoad", reading.Cpu), new XElement("CPUTemperature", reading.CpuTemp), new XElement("CPUPackagePower", reading.CpuPower), new XElement("GPU", reading.GpuName), new XElement("GPULoad", reading.Gpu), new XElement("GPUTemperature", reading.GpuTemp), new XElement("GPUPower", reading.GpuPower), new XElement("VRAMUsedMiB", reading.VramUsed), new XElement("VRAMTotalMiB", reading.VramTotal), new XElement("VRAMPercent", reading.VramPercent), new XElement("MemoryLoad", reading.Memory), new XElement("MemorySpec", reading.MemorySpec), new XElement("DiskLoad", reading.Disk), new XElement("Adapter", reading.Adapter), new XElement("UploadBytesPerSecond", reading.Upload), new XElement("DownloadBytesPerSecond", reading.Download), new XElement("Display", PreferredScreen().DeviceName), new XElement("RefreshHz", RefreshRate())); xml.Save(Path.ChangeExtension(path, ".xml")); }
+        public void Snapshot(string path) { try { quota=CodexQuota.Fetch(); } catch {quotaFailed=true;} try { weather = WeatherClient.Fetch(settings.WeatherLatitude,settings.WeatherLongitude,settings.WeatherName,settings.WeatherTimeZone); } catch { } reading = sensors.Poll(); Thread.Sleep(1100); reading = sensors.Poll(); lastGood = DateTime.Now; Push(cpuHistory, reading.Cpu); Push(gpuHistory, Math.Max(0, reading.Gpu)); using (var b = new Bitmap(1920, 480)) { using (var g = Graphics.FromImage(b)) Render(g, 1920, 480); b.Save(path, ImageFormat.Png); } var xml = new XElement("Diagnostics", new XElement("CPU", reading.CpuName), new XElement("CPULoad", reading.Cpu), new XElement("CPUTemperature", reading.CpuTemp), new XElement("CPUPackagePower", reading.CpuPower), new XElement("GPU", reading.GpuName), new XElement("GPULoad", reading.Gpu), new XElement("GPUTemperature", reading.GpuTemp), new XElement("GPUPower", reading.GpuPower), new XElement("VRAMUsedMiB", reading.VramUsed), new XElement("VRAMTotalMiB", reading.VramTotal), new XElement("VRAMPercent", reading.VramPercent), new XElement("MemoryLoad", reading.Memory), new XElement("MemorySpec", reading.MemorySpec), new XElement("DiskLoad", reading.Disk), new XElement("Adapter", reading.Adapter), new XElement("UploadBytesPerSecond", reading.Upload), new XElement("DownloadBytesPerSecond", reading.Download), new XElement("Display", PreferredScreen().DeviceName), new XElement("RefreshHz", RefreshRate())); xml.Save(Path.ChangeExtension(path, ".xml")); }
     }
     static class Program {
         [DllImport("user32.dll")] static extern bool SetProcessDPIAware();

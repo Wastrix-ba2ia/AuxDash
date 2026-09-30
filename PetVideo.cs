@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Drawing;
 using System.IO;
 using System.Diagnostics;
@@ -35,7 +35,7 @@ namespace SideScreenMonitor {
         public string IdleName {get{return idleVariants.Count==0?"default":idleVariants[variantIndex].Name;}}
         public string ActiveClip {get{return activeClip;}}
         public string PendingClip {get{return queuedClip;}}
-        public static string[] ActionNames {get{return new[]{"比心","歪头","抱抱","伸懒腰","打哈欠","喝水","擦汗","跳舞","欢快舞蹈","转圈","读书","游戏陪伴","代码","开会","电量告急","充电","带伞提醒","加衣提醒","内存告急","显存告急","磁盘提醒","网络慢","网络飞速","递本子","点头","摇头","叹气","忙碌","电脑打字","打盹","开心","打招呼","摸鱼"};}}
+        public static string[] ActionNames {get{return new[]{"比心","歪头","抱抱","伸懒腰","打哈欠","喝水","擦汗","跳舞","欢快舞蹈","转圈","读书","游戏陪伴","代码","开会","电量告急","充电","带伞提醒","加衣提醒","内存告急","显存告急","磁盘提醒","网络慢","网络飞速","递本子","点头","摇头","叹气","忙碌","电脑打字","打盹","开心","打招呼","摸鱼","蹦跳庆祝","托腮陪伴","爱心灯","窗边回望","捧杯暖手","舒展手臂","挥手加油","俏皮指挥","空气吉他","偶像应援","兔兔跳","慢歌摇摆","小鼓手","可爱拳击舞","麦克风主唱","优雅谢幕"};}}
         int observedEvent=-1; double bubbleUntil; string bubble=""; bool night;
         public PetVideo() { string p=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"assets","video-trial","robot-front.png"); if(File.Exists(p)) using(var im=Image.FromFile(p)) neutral=new Bitmap(im);
             string fixedRoot=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"assets","idle-v3");
@@ -58,6 +58,23 @@ namespace SideScreenMonitor {
         public bool Available { get { return neutral!=null; } }
         public static string Clip(string state) {
             switch(state) {
+            case "蹦跳庆祝":return "daily-happy-hop-haomao";
+            case "托腮陪伴":return "daily-final-chin";
+            case "爱心灯":return "daily-final-heartlight";
+            case "窗边回望":return "daily-final-window";
+            case "捧杯暖手":return "daily-final-cup";
+            case "舒展手臂":return "daily-final-stretch";
+            case "挥手加油":return "daily-final-cheer";
+            case "俏皮指挥":return "daily-final-conductor";
+            case "空气吉他":return "music-guitar";
+            case "偶像应援":return "music-support";
+            case "兔兔跳":return "music-bunny";
+            case "慢歌摇摆":return "music-slow";
+            case "小鼓手":return "music-drums";
+            case "可爱拳击舞":return "music-boxing";
+            case "麦克风主唱":return "music-singer";
+            case "优雅谢幕":return "music-bow";
+            case "战术出击":return "gaming-tactical-sealed";
             case "电脑打字":return "work-typing";
             case "唤醒舞蹈":return "apt-wake";
             case "小彩蛋":case "比心":return "heart";
@@ -82,6 +99,29 @@ namespace SideScreenMonitor {
             default:return null; }
         }
         public bool HasAction(string state) {string clip=Clip(state);return clip!=null && File.Exists(Path.Combine(actionRoot,clip,"ready.txt"));}
+        bool gameWasRunning,gameIntroPending,musicBlocked;
+        public void SetMusicBlocked(bool blocked) {
+            musicBlocked=blocked;
+            if(!blocked)return;
+            if(queuedClip!=null && queuedClip.StartsWith("music-",StringComparison.Ordinal)) {queuedClip=null;queuedState=null;queuedCaptionKey=null;queuedPriority=0;queuedCodex=false;}
+            if(activeClip!=null && activeClip.StartsWith("music-",StringComparison.Ordinal)) {
+                modernPlaying=false;files=null;activeClip=null;activeState=null;activeCaptionKey=null;idleEpoch=clock.Elapsed.TotalSeconds;
+                if(frame!=null){frame.Dispose();frame=null;}index=-1;
+            }
+        }
+        public void CancelMusic(){bool wasBlocked=musicBlocked;SetMusicBlocked(true);musicBlocked=wasBlocked;}
+        public void QueueMusic(string state){if(Clip(state)!=null && Clip(state).StartsWith("music-",StringComparison.Ordinal))QueueAction(state,false,25);}
+        public void ObserveGame(bool running) {
+            if(running && !gameWasRunning)gameIntroPending=true;
+            if(!running){gameIntroPending=false;if(queuedState=="战术出击"){queuedClip=null;queuedState=null;queuedPriority=0;}}
+            gameWasRunning=running;
+            if(gameIntroPending && activeClip==Clip("战术出击"))gameIntroPending=false;
+            if(gameIntroPending && Enabled && HasAction("战术出击") && (queuedClip==null || queuedPriority<=70)) {
+                QueueAction("战术出击",true,70);
+                if(!modernPlaying)idleEpoch=clock.Elapsed.TotalSeconds;
+            }
+        }
+        bool ForwardAction {get{return activeClip=="apt-wake" || activeClip=="gaming-tactical-sealed" || (activeClip!=null && (activeClip.StartsWith("music-",StringComparison.Ordinal) || activeClip.StartsWith("daily-final-",StringComparison.Ordinal) || activeClip=="daily-happy-hop-haomao"));}}
         public void PlayWakeDance() {
             if(!Enabled || !HasAction("唤醒舞蹈"))return;
             modernPlaying=false;files=null;activeClip=null;activeState=null;activeCaptionKey=null;
@@ -98,7 +138,7 @@ namespace SideScreenMonitor {
         }
         void QueueAction(string state,bool force,int priority,bool fromCodex=false) {
             if(!force && !fromCodex && codexState!="idle" && priority<60)return;
-            string clip=Clip(state);if(clip==null || !HasAction(state))return;
+            string clip=Clip(state);if(clip==null || !HasAction(state) || (musicBlocked && clip.StartsWith("music-",StringComparison.Ordinal)))return;
             double last;if(!force && actionTimes.TryGetValue(clip,out last) && clock.Elapsed.TotalSeconds-last<45)return;
             if(!force && (activeClip==clip || (queuedClip!=null && queuedPriority>priority)))return;
             queuedClip=clip;queuedPriority=priority;queuedCodex=fromCodex;
@@ -113,7 +153,7 @@ namespace SideScreenMonitor {
             if(!Enabled)return;
             double now=clock.Elapsed.TotalSeconds;
             if(modernPlaying) {
-                if(now-started<(activeClip=="apt-wake"?files.Length/24.0:(files.Length-1)/24.0*2))return;
+                if(now-started<(ForwardAction?files.Length/24.0:(files.Length-1)/24.0*2))return;
                 modernPlaying=false;files=null;activeClip=null;activeState=null;activeCaptionKey=null;idleEpoch=now;
             }
             if(queuedClip==null && codexState=="running")QueueWorkAction();
@@ -128,6 +168,7 @@ namespace SideScreenMonitor {
             if(next.Length<2){queuedClip=null;return;}
             files=next;activeClip=queuedClip;queuedClip=null;queuedPriority=0;
             activeState=queuedState;activeCaptionKey=queuedCaptionKey;ActionSerial++;
+            if(activeState=="战术出击")gameIntroPending=false;
             if(activeClip=="work" || activeClip=="work-typing")lastWorkClip=activeClip;
             modernPlaying=true;started=now;actionTimes[activeClip]=now;index=-1;
             if(frame!=null){frame.Dispose();frame=null;}
@@ -158,7 +199,7 @@ namespace SideScreenMonitor {
             bool playing=Enabled && files!=null && (modernPlaying || elapsed<files.Length/24.0);
             Image image=neutral; RectangleF source=new RectangleF(0,0,neutral.Width,neutral.Height*(completeHeadIdle?1f:.48f));
             if(playing) {
-                int wanted=modernPlaying && activeClip!="apt-wake"?ActionFrameAt(elapsed,files.Length):Math.Min(files.Length-1,(int)(elapsed*24));
+                int wanted=modernPlaying && !ForwardAction?ActionFrameAt(elapsed,files.Length):Math.Min(files.Length-1,(int)(elapsed*24));
                 if(index!=wanted) { try { var next=Image.FromFile(files[wanted]);if(frame!=null)frame.Dispose();frame=next;index=wanted; }catch(IOException){} }
                 if(frame!=null) { image=frame;source=new RectangleF(0,0,frame.Width,frame.Height*(modernPlaying?1f:.84f)); }
             }

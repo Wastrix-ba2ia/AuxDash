@@ -26,16 +26,29 @@ namespace SideScreenMonitor {
         public double Temperature, TodayLow, TodayHigh, TomorrowLow, TomorrowHigh;
         public int Code, TomorrowCode;
         public DateTime Observed, Day, Received;
-        public bool Cached;
+        public bool Cached; public string Location="长春", TimeZone="Asia/Shanghai";
+        public bool IsCurrent {
+            get {DateTime local;try{local=TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow,TimeZoneInfo.FindSystemTimeZoneById(TimeZone));}catch{local=DateTime.UtcNow.AddHours(8);}return Day.Date==local.Date&&(local-Observed).TotalHours<=2&&Observed<=local.AddMinutes(30);}
+        }
         public string Summary() {
-            DateTime chinaNow = DateTime.UtcNow.AddHours(8);
-            if (Day.Date != chinaNow.Date || (chinaNow - Observed).TotalHours > 2 || Observed > chinaNow.AddMinutes(30)) return "吉林长春  天气数据已过期，等待更新";
-            return "吉林长春  " + WeatherClient.Condition(Code) + " " + Temperature.ToString("0.0", CultureInfo.InvariantCulture) + "°C  |  今天 " + TodayLow.ToString("0") + "～" + TodayHigh.ToString("0") + "°C  |  明天 " + WeatherClient.Condition(TomorrowCode) + " " + TomorrowLow.ToString("0") + "～" + TomorrowHigh.ToString("0") + "°C" + (Cached ? "  [缓存]" : "");
+            if(!IsCurrent)return Location+"  天气数据已过期，等待更新";
+            return Location+"  " + WeatherClient.Condition(Code) + " " + Temperature.ToString("0.0", CultureInfo.InvariantCulture) + "°C  |  今天 " + TodayLow.ToString("0") + "～" + TodayHigh.ToString("0") + "°C  |  明天 " + WeatherClient.Condition(TomorrowCode) + " " + TomorrowLow.ToString("0") + "～" + TomorrowHigh.ToString("0") + "°C" + (Cached ? "  [缓存]" : "");
         }
     }
     public static class WeatherClient {
-        const string Url = "https://api.open-meteo.com/v1/forecast?latitude=43.88&longitude=125.32278&current=temperature_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=Asia%2FShanghai&forecast_days=3";
-        static string CachePath { get { return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "weather-cache.json"); } }
+        public sealed class Location { public string Name,Admin1,Country,TimeZone; public double Latitude,Longitude; public override string ToString(){return Name+(string.IsNullOrEmpty(Admin1)?"":" · "+Admin1)+(string.IsNullOrEmpty(Country)?"":" · "+Country);} }
+        static string CachePath(double latitude,double longitude) { return Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"weather-cache-"+latitude.ToString("0.####",CultureInfo.InvariantCulture)+"-"+longitude.ToString("0.####",CultureInfo.InvariantCulture)+".json"); }
+        public static List<Location> Search(string name) {
+            ServicePointManager.SecurityProtocol|=SecurityProtocolType.Tls12;
+            string url="https://geocoding-api.open-meteo.com/v1/search?name="+Uri.EscapeDataString(name)+"&count=12&language=zh&format=json";
+            var req=(HttpWebRequest)WebRequest.Create(url);req.Timeout=10000;req.UserAgent="NeonSideScreenMonitor/1.0";
+            using(var response=req.GetResponse())using(var reader=new StreamReader(response.GetResponseStream())){
+                var root=new JavaScriptSerializer().Deserialize<Dictionary<string,object>>(reader.ReadToEnd());var list=new List<Location>();object raw;
+                if(!root.TryGetValue("results",out raw)||!(raw is IList))return list;
+                foreach(var item in (IList)raw){var row=item as Dictionary<string,object>;if(row==null)continue;list.Add(new Location{Name=Convert.ToString(row["name"]),Admin1=row.ContainsKey("admin1")?Convert.ToString(row["admin1"]):"",Country=row.ContainsKey("country")?Convert.ToString(row["country"]):"",TimeZone=row.ContainsKey("timezone")?Convert.ToString(row["timezone"]):"Asia/Shanghai",Latitude=N(row["latitude"]),Longitude=N(row["longitude"]) });}
+                return list;
+            }
+        }
         static double N(object value) { if (value == null) throw new InvalidDataException("Missing weather value"); return Convert.ToDouble(value, CultureInfo.InvariantCulture); }
         public static WeatherReading Parse(string json) {
             var root = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(json);
@@ -46,14 +59,16 @@ namespace SideScreenMonitor {
             if (DateTime.Parse(Convert.ToString(days[1]), CultureInfo.InvariantCulture).Date != today.AddDays(1).Date) throw new InvalidDataException("Invalid forecast dates");
             return new WeatherReading { Temperature = N(current["temperature_2m"]), Code = (int)N(current["weather_code"]), Observed = DateTime.Parse(Convert.ToString(current["time"]), CultureInfo.InvariantCulture), Day = today, TodayLow = N(lows[0]), TodayHigh = N(highs[0]), TomorrowLow = N(lows[1]), TomorrowHigh = N(highs[1]), TomorrowCode = (int)N(codes[1]), Received = DateTime.UtcNow };
         }
-        public static WeatherReading LoadCache() { try { var r = Parse(File.ReadAllText(CachePath)); r.Cached = true; return r; } catch { return null; } }
-        public static WeatherReading Fetch() {
+        public static WeatherReading LoadCache(double latitude,double longitude,string location,string timezone) { try { var r = Parse(File.ReadAllText(CachePath(latitude,longitude))); r.Cached=true;r.Location=location;r.TimeZone=timezone;return r; } catch{return null;} }
+        public static WeatherReading Fetch(double latitude,double longitude,string location,string timezone) {
             ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
-            var request = (HttpWebRequest)WebRequest.Create(Url);
+            string url="https://api.open-meteo.com/v1/forecast?latitude="+latitude.ToString(CultureInfo.InvariantCulture)+"&longitude="+longitude.ToString(CultureInfo.InvariantCulture)+"&current=temperature_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone="+Uri.EscapeDataString(timezone)+"&forecast_days=3";
+            var request = (HttpWebRequest)WebRequest.Create(url);
             request.Timeout = 10000; request.ReadWriteTimeout = 10000; request.UserAgent = "NeonSideScreenMonitor/1.0";
             using (var response = request.GetResponse()) using (var reader = new StreamReader(response.GetResponseStream())) {
-                string json = reader.ReadToEnd(); var r = Parse(json);
-                try { File.WriteAllText(CachePath + ".tmp", json); if (File.Exists(CachePath)) File.Replace(CachePath + ".tmp", CachePath, null); else File.Move(CachePath + ".tmp", CachePath); } catch { }
+                string json = reader.ReadToEnd(); var r = Parse(json);r.Location=location;r.TimeZone=timezone;
+                string cache=CachePath(latitude,longitude);
+                try { File.WriteAllText(cache+".tmp",json);if(File.Exists(cache))File.Replace(cache+".tmp",cache,null);else File.Move(cache+".tmp",cache); } catch { }
                 return r;
             }
         }

@@ -1,4 +1,6 @@
-﻿using System;
+using System;
+using System.IO;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Runtime.InteropServices;
 namespace SideScreenMonitor {
@@ -88,6 +90,12 @@ namespace SideScreenMonitor {
                 nextRandom=now.AddSeconds(RandomDelay(Night,random.Next(10000)));
                 int roll=random.Next(100);
                 string action=roll<(Night?4:12)?"小彩蛋":!Night&&roll<22?"欢快舞蹈":!Night&&roll<32?"跳舞":!Night&&roll<42?"点头":"歪头";
+                var daily=new List<string>();
+                foreach(string candidate in Night ? new[]{"托腮陪伴","窗边回望","捧杯暖手"} : new[]{"蹦跳庆祝","托腮陪伴","爱心灯","窗边回望","捧杯暖手","舒展手臂","挥手加油","俏皮指挥"}) {
+                    string clip=PetVideo.Clip(candidate);
+                    if(candidate!=lastAuto && File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"assets","actions-bedroom",clip,"ready.txt")))daily.Add(candidate);
+                }
+                if(daily.Count>0 && roll<75)action=daily[random.Next(daily.Count)];
                 if(action==lastAuto && action!="歪头")action="歪头";lastAuto=action;
                 Request(action,action=="小彩蛋"?"偷偷送你一颗心。":action=="转圈"||action=="欢快舞蹈"?"给你跳一小段，开心一下。":new[]{"忙着呢？","我在呀。","慢慢来。"}[random.Next(3)],now);
                 Set(action,manualMessage,action=="歪头"?"紫色":"绿色");return;
