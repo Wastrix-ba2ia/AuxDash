@@ -18,4 +18,3 @@ class MediaSessionBridge {
   }catch{Console.WriteLine("unavailable");}
  }
 }
-

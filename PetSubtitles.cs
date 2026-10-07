@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Collections.Generic;
 using System.Web.Script.Serialization;
@@ -28,6 +28,7 @@ namespace SideScreenMonitor {
   public string Resolve(string localState,string codexState,string actionKey,int actionSerial,string idleName,bool night,DateTime now) {
    string wanted="";bool repeat=false;double duration=6;
    if(Warning(localState)){wanted=localState;repeat=true;duration=8;}
+   else if(localState=="护眼休息"){wanted=localState;repeat=true;duration=10;}
    else if(codexState=="waiting"||codexState=="error"){wanted="Codex/"+codexState;repeat=true;duration=8;}
    else if(codexState=="running"||codexState=="ready"){wanted="Codex/"+codexState;repeat=codexState=="running";}
    else if(!string.IsNullOrEmpty(actionKey) && !(actionKey.StartsWith("Codex/") && codexState=="idle"))wanted=actionKey.StartsWith("Codex/")?"Codex/"+codexState:actionKey;

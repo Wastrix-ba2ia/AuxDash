@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -111,13 +112,13 @@ namespace SideScreenMonitor {
     }
     public sealed class Settings {
         public string Monitor = "", Art = "";
-        public bool Topmost = true, PetBubbles;
-        public bool AutoMemoryClean=true; public bool MusicLink=true;
+        public bool Topmost = true, PetBubbles, Portrait, FlipDisplay;
+        public bool AutoMemoryClean=true; public bool MusicLink=true; public bool EyeRestEnabled=true;
         public string WeatherName="长春", WeatherTimeZone="Asia/Shanghai";public double WeatherLatitude=43.88,WeatherLongitude=125.32278;
         public DateTime GreetingDay=DateTime.MinValue;
         static string FileName { get { return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "settings.xml"); } }
-        public static Settings Load() { var s = new Settings(); try { var r = XElement.Load(FileName); s.Monitor = (string)r.Element("Monitor") ?? ""; s.Art = (string)r.Element("Art") ?? ""; s.Topmost = (bool?)r.Element("Topmost") ?? true; s.MusicLink=(bool?)r.Element("MusicLink")??true;s.WeatherName=(string)r.Element("WeatherName")??"长春";s.WeatherTimeZone=(string)r.Element("WeatherTimeZone")??"Asia/Shanghai";s.WeatherLatitude=(double?)r.Element("WeatherLatitude")??43.88;s.WeatherLongitude=(double?)r.Element("WeatherLongitude")??125.32278;s.AutoMemoryClean=(bool?)r.Element("AutoMemoryClean")??true;s.PetBubbles=(bool?)r.Element("PetBubbles")??false;s.GreetingDay=(DateTime?)r.Element("GreetingDay")??DateTime.MinValue; } catch { } return s; }
-        public void Save() { try { new XElement("Settings", new XElement("WeatherName",WeatherName),new XElement("WeatherTimeZone",WeatherTimeZone),new XElement("WeatherLatitude",WeatherLatitude),new XElement("WeatherLongitude",WeatherLongitude),new XElement("MusicLink",MusicLink),new XElement("AutoMemoryClean",AutoMemoryClean),new XElement("Monitor", Monitor), new XElement("Art", Art), new XElement("PetBubbles",PetBubbles),new XElement("GreetingDay",GreetingDay),new XElement("Topmost", Topmost)).Save(FileName); } catch { } }
+        public static Settings Load() { var s = new Settings(); try { var r = XElement.Load(FileName); s.Portrait=(bool?)r.Element("Portrait")??false;s.FlipDisplay=(bool?)r.Element("FlipDisplay")??false; s.Monitor = (string)r.Element("Monitor") ?? ""; s.Art = (string)r.Element("Art") ?? ""; s.Topmost = (bool?)r.Element("Topmost") ?? true; s.MusicLink=(bool?)r.Element("MusicLink")??true;s.EyeRestEnabled=(bool?)r.Element("EyeRestEnabled")??true;s.WeatherName=(string)r.Element("WeatherName")??"长春";s.WeatherTimeZone=(string)r.Element("WeatherTimeZone")??"Asia/Shanghai";s.WeatherLatitude=(double?)r.Element("WeatherLatitude")??43.88;s.WeatherLongitude=(double?)r.Element("WeatherLongitude")??125.32278;s.AutoMemoryClean=(bool?)r.Element("AutoMemoryClean")??true;s.PetBubbles=(bool?)r.Element("PetBubbles")??false;s.GreetingDay=(DateTime?)r.Element("GreetingDay")??DateTime.MinValue; } catch { } return s; }
+        public void Save() { try { new XElement("Settings", new XElement("Portrait",Portrait),new XElement("FlipDisplay",FlipDisplay),new XElement("WeatherName",WeatherName),new XElement("WeatherTimeZone",WeatherTimeZone),new XElement("WeatherLatitude",WeatherLatitude),new XElement("WeatherLongitude",WeatherLongitude),new XElement("MusicLink",MusicLink),new XElement("EyeRestEnabled",EyeRestEnabled),new XElement("AutoMemoryClean",AutoMemoryClean),new XElement("Monitor", Monitor), new XElement("Art", Art), new XElement("PetBubbles",PetBubbles),new XElement("GreetingDay",GreetingDay),new XElement("Topmost", Topmost)).Save(FileName); } catch { } }
     }
     public sealed class Dashboard : Form {
         readonly Settings settings;
@@ -147,7 +148,7 @@ namespace SideScreenMonitor {
         readonly MusicSessions musicSessions=new MusicSessions();readonly MusicGate musicGate=new MusicGate();
         readonly Random musicRandom=new Random();DateTime nextMusic;string lastMusic="";
         void CheckMusic(){
-            bool blocked=detectedGame || displayWasOff || !settings.MusicLink || !animation.Enabled || !petRules.AutoPerform || petRules.State=="开会" || PetSubtitles.Warning(petRules.State);
+            bool blocked=detectedGame || displayWasOff || !settings.MusicLink || !animation.Enabled || !petRules.AutoPerform || petRules.State=="开会" || petRules.State=="护眼休息" || PetSubtitles.Warning(petRules.State);
             bool active=musicGate.Update(!blocked && musicSessions.Poll(),blocked,DateTime.UtcNow);
             petVideo.SetMusicBlocked(blocked);
             if(!active){petVideo.CancelMusic();nextMusic=DateTime.MinValue;return;}
@@ -174,7 +175,7 @@ namespace SideScreenMonitor {
             ShowInTaskbar=false;
             Text = "NEON / 副屏监控"; BackColor = Color.FromArgb(24, 20, 38);
             DoubleBuffered = true; ResizeRedraw = true; KeyPreview = true; AutoScaleMode = AutoScaleMode.None;
-            StartPosition = FormStartPosition.Manual; ClientSize = new Size(1440, 360); MinimumSize = new Size(740, 225);
+            StartPosition = FormStartPosition.Manual; ClientSize = settings.Portrait?new Size(300,1200):new Size(1440,360); MinimumSize = settings.Portrait?new Size(180,400):new Size(740,225);
             using (var stream = System.Reflection.Assembly.GetExecutingAssembly().GetManifestResourceStream("reference.png")) using (var img = Image.FromStream(stream)) reference = new Bitmap(img);
             if (File.Exists(settings.Art)) customArt = LoadImage(settings.Art);
             TopMost = settings.Topmost;
@@ -189,7 +190,7 @@ namespace SideScreenMonitor {
                 trayIcon.DoubleClick+=delegate {RestoreDashboard();};
             }
             timer.Interval = 1000; timer.Tick += delegate { ticks++; CheckGame(); CheckMusic(); BeginQuota(); BeginActivity(); KeepOnSecondaryScreen(); BeginSample(); BeginWeather(); Invalidate(); };
-            animationTimer.Interval = 33; animationTimer.Tick += delegate { if (animation.Enabled && (petVideo.Available || animation.Available) && !displayWasOff && WindowState != FormWindowState.Minimized) Invalidate(new Rectangle(0, 0, (int)Math.Ceiling(ClientSize.Width * 421f / 1110f), ClientSize.Height)); };
+            animationTimer.Interval = 33; animationTimer.Tick += delegate { if (animation.Enabled && (petVideo.Available || animation.Available) && !displayWasOff && WindowState != FormWindowState.Minimized) {Invalidate(OrientRectangle(settings.Portrait?PortraitPetClientBounds():new Rectangle(0,0,(int)Math.Ceiling(ClientSize.Width*421f/1110f),ClientSize.Height)));} };
             if (!preview) animationTimer.Start();
             Shown += delegate { if (!preview) { MoveToPreferredScreen(); timer.Start(); CheckGame(); BeginSample(); BeginInvoke((Action)SaveWindowDiagnostics); BeginInvoke((Action)StartCpuSensors); BeginInvoke((Action)animation.Greet); } };
             KeyDown += OnKey;
@@ -255,6 +256,14 @@ namespace SideScreenMonitor {
         ContextMenuStrip BuildMenu() {
             var menu = new ContextMenuStrip();
             menu.Items.Add("全屏 / 窗口    F11", null, delegate { SetFullscreen(!fullscreen); });
+            var layouts=new ToolStripMenuItem("显示布局");
+            var landscape=new ToolStripMenuItem("横版 · 1920 × 480");
+            var portrait=new ToolStripMenuItem("竖版 · 480 × 1920");
+            landscape.Click+=delegate{SetLayout(false);};portrait.Click+=delegate{SetLayout(true);};
+            layouts.DropDownOpening+=delegate{landscape.Checked=!settings.Portrait;portrait.Checked=settings.Portrait;};
+            layouts.DropDownItems.Add(landscape);layouts.DropDownItems.Add(portrait);menu.Items.Add(layouts);
+            var flip=new ToolStripMenuItem("画面翻转 180°（倒装屏幕）"){Checked=settings.FlipDisplay,CheckOnClick=true};
+            flip.CheckedChanged+=delegate{settings.FlipDisplay=flip.Checked;settings.Save();Invalidate();};layouts.DropDownItems.Add(new ToolStripSeparator());layouts.DropDownItems.Add(flip);
             var displays = new ToolStripMenuItem("移动到显示器");
             foreach (var display in Screen.AllScreens) { var captured = display; displays.DropDownItems.Add(display.DeviceName + "  " + display.Bounds.Width + " × " + display.Bounds.Height + (display.Primary ? "  主屏" : "  副屏"), null, delegate { settings.Monitor = captured.DeviceName; settings.Save(); if (!fullscreen) windowBounds = new Rectangle(captured.WorkingArea.Location, Size); SetFullscreen(true); }); }
             menu.Items.Add(displays);
@@ -278,6 +287,8 @@ namespace SideScreenMonitor {
             var autoMoves = new ToolStripMenuItem("副屏自动互动（无需点击）") { Checked = animation.AutoPerform, CheckOnClick = true };
             autoMoves.CheckedChanged += delegate { animation.AutoPerform = autoMoves.Checked; petRules.AutoPerform=autoMoves.Checked; };
             moves.DropDownItems.Add(autoMoves);
+            var eyeRest=new ToolStripMenuItem("每小时护眼休息（5 分钟）"){Checked=settings.EyeRestEnabled,CheckOnClick=true};
+            eyeRest.CheckedChanged+=delegate{settings.EyeRestEnabled=eyeRest.Checked;petRules.EyeRestEnabled=eyeRest.Checked;settings.Save();};moves.DropDownItems.Add(eyeRest);
             var musicLink=new ToolStripMenuItem("音乐联动（系统标记为音乐时）"){Checked=settings.MusicLink,CheckOnClick=true};
             musicLink.CheckedChanged+=delegate{settings.MusicLink=musicLink.Checked;settings.Save();CheckMusic();};moves.DropDownItems.Add(musicLink);
             moves.DropDownItems.Add("忙碌情绪提示", null, delegate { petRules.Request("忙碌",DateTime.Now); });
@@ -361,7 +372,7 @@ namespace SideScreenMonitor {
             if(weather!=null && (DateTime.UtcNow-weather.Received).TotalHours<2 && weather.Day.Date==DateTime.Now.Date) {
                 signal.Outdoor=weather.Temperature;signal.Precipitation=weather.Code>=51 && weather.Code<=99;
             }
-            petRules.Update(signal,DateTime.Now);petVideo.Observe(petRules);if(settings.GreetingDay!=petRules.LastGreetingDay){settings.GreetingDay=petRules.LastGreetingDay;settings.Save();}
+            petRules.EyeRestEnabled=settings.EyeRestEnabled;petRules.Update(signal,DateTime.Now);petVideo.Observe(petRules);if(settings.GreetingDay!=petRules.LastGreetingDay){settings.GreetingDay=petRules.LastGreetingDay;settings.Save();}
         }
         void BeginQuota() {
             if(!activityEnabled || DateTime.UtcNow<nextQuota || Interlocked.Exchange(ref quotaBusy,1)==1)return;
@@ -382,7 +393,17 @@ namespace SideScreenMonitor {
             });
         }
         static void Push(List<double> list, double v) { list.Add(v); if (list.Count > 48) list.RemoveAt(0); }
-        protected override void OnPaint(PaintEventArgs e) { base.OnPaint(e); Render(e.Graphics, ClientSize.Width, ClientSize.Height,e.ClipRectangle.Right>ClientSize.Width*421f/1110f+2); }
+        void SetLayout(bool portrait) {
+            settings.Portrait=portrait;settings.Save();MinimumSize=portrait?new Size(180,400):new Size(740,225);
+            var area=PreferredScreen().WorkingArea;float scale=Math.Min(1,Math.Min(area.Width/(portrait?480f:1920f),area.Height/(portrait?1920f:480f))*.9f);
+            var size=new Size(Math.Max(MinimumSize.Width,(int)((portrait?480:1920)*scale)),Math.Max(MinimumSize.Height,(int)((portrait?1920:480)*scale)));
+            windowBounds=new Rectangle(area.Location,size);
+            if(!fullscreen) {ClientSize=size;windowBounds=Bounds;}
+            Invalidate();
+        }
+        Rectangle PortraitPetClientBounds() {float scale=Math.Min(ClientSize.Width/480f,ClientSize.Height/1920f);return Rectangle.Ceiling(new RectangleF((ClientSize.Width-480*scale)/2,(ClientSize.Height-1920*scale)/2+124*scale,480*scale,690*scale));}
+        Rectangle OrientRectangle(Rectangle r) {return settings.FlipDisplay?new Rectangle(ClientSize.Width-r.Right,ClientSize.Height-r.Bottom,r.Width,r.Height):r;}
+        protected override void OnPaint(PaintEventArgs e) { base.OnPaint(e);var clip=OrientRectangle(e.ClipRectangle);Render(e.Graphics, ClientSize.Width, ClientSize.Height,settings.Portrait?!PortraitPetClientBounds().Contains(clip):clip.Right>ClientSize.Width*421f/1110f+2); }
         static Color Ink = Color.FromArgb(14, 18, 23);
         static GraphicsPath Rounded(float x, float y, float w, float h, float radius) { var p = new GraphicsPath(); float d = radius * 2; p.AddArc(x, y, d, d, 180, 90); p.AddArc(x + w - d, y, d, d, 270, 90); p.AddArc(x + w - d, y + h - d, d, d, 0, 90); p.AddArc(x, y + h - d, d, d, 90, 90); p.CloseFigure(); return p; }
         void Card(Graphics g, float x, float y, float w, float h) { using (var p = Rounded(x, y, w, h, 14)) using (var b = new LinearGradientBrush(new RectangleF(x, y, w, h), Color.FromArgb(228, 209, 222, 226), Color.FromArgb(231, 205, 202, 206), 90)) { g.FillPath(b, p); using (var pen = new Pen(Color.FromArgb(130, 76, 215, 246), 1.2f)) g.DrawPath(pen, p); using (var glow = new Pen(Color.FromArgb(25, 125, 98, 255), 4f)) g.DrawPath(glow, p); using (var line = new Pen(Color.FromArgb(190, 57, 187, 228), 2f)) g.DrawLine(line, x + 15, y + 1, x + Math.Min(w - 15, 66), y + 1); } }
@@ -405,12 +426,12 @@ namespace SideScreenMonitor {
         }
         void Fan(Graphics g, float x, float y, float radius) { var state = g.Save(); g.TranslateTransform(x, y); g.RotateTransform(ticks * 24); using (var b = new SolidBrush(Color.FromArgb(190, 44, 48, 48))) { for (int j = 0; j < 9; j++) { g.RotateTransform(40); using (var p = new GraphicsPath()) { p.AddBezier(3, -2, radius, -radius, radius + 3, -4, 8, 7); p.AddLine(8, 7, 3, -2); g.FillPath(b, p); } } g.FillEllipse(b, -7, -7, 14, 14); } g.Restore(state); }
         public string SubtitleText = "";
-        void DrawSubtitle(Graphics g,int width,int height,int barHeight) {
+        void DrawSubtitle(Graphics g,int width,int height,int barHeight,bool portrait=false) {
             string subtitle=string.IsNullOrEmpty(SubtitleText)?petSubtitles.Resolve(petRules.State,petVideo.CodexState,petVideo.ActiveCaptionKey,petVideo.ActionSerial,petVideo.IdleName,petRules.Night,DateTime.UtcNow):SubtitleText;
             if(string.IsNullOrEmpty(subtitle))return;
             // Plain video subtitles over the character; no panel or reserved space.
-            float leftWidth=width*421f/1110f;
-            float size=Math.Max(16,height*.0583f);
+            float leftWidth=portrait?width:width*421f/1110f;
+            float size=portrait?24:Math.Max(16,height*.0583f);
             var box=new RectangleF(18,height-size*2.05f,leftWidth-36,size*1.6f);
             using(var font=new Font("Microsoft YaHei UI",size,FontStyle.Bold,GraphicsUnit.Pixel))
             using(var format=new StringFormat{Alignment=StringAlignment.Center,LineAlignment=StringAlignment.Center,Trimming=StringTrimming.EllipsisCharacter,FormatFlags=StringFormatFlags.NoWrap}) {
@@ -426,6 +447,12 @@ namespace SideScreenMonitor {
             }
         }
         public void Render(Graphics g, int width, int height,bool repaintDashboard=true) {
+            var orientation=g.Save();
+            try {if(settings.FlipDisplay){g.TranslateTransform(width,height);g.RotateTransform(180);}RenderContent(g,width,height,repaintDashboard);}
+            finally {g.Restore(orientation);}
+        }
+        void RenderContent(Graphics g,int width,int height,bool repaintDashboard) {
+            if(settings.Portrait){RenderPortrait(g,width,height,repaintDashboard);return;}
             g.Clear(Color.FromArgb(29, 22, 45)); g.SmoothingMode = SmoothingMode.AntiAlias; g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit; g.InterpolationMode = InterpolationMode.HighQualityBicubic;
             int subtitleHeight=0;
             var root = g.Save(); g.ScaleTransform(width / 1110f, (height-subtitleHeight) / 314f);
@@ -479,6 +506,54 @@ namespace SideScreenMonitor {
             DrawVideoWindowFrame(g,width,height);
             DrawSubtitle(g,width,height,subtitleHeight);
         }
+        void RenderPortrait(Graphics g,int width,int height,bool repaintDashboard) {
+            g.Clear(Color.FromArgb(18,22,35));
+            float scale=Math.Min(width/480f,height/1920f);
+            var root=g.Save();g.TranslateTransform((width-480*scale)/2,(height-1920*scale)/2);g.ScaleTransform(scale,scale);
+            g.SmoothingMode=SmoothingMode.AntiAlias;g.TextRenderingHint=System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
+            using(var b=new LinearGradientBrush(new Rectangle(0,0,480,1920),Color.FromArgb(20,30,47),Color.FromArgb(56,29,67),90f))g.FillRectangle(b,0,0,480,1920);
+            DateTime now=DateTime.Now;
+            if(repaintDashboard) {
+            TextAt(g,now.ToString("HH:mm:ss"),18,10,43,Color.White,"Bahnschrift",FontStyle.Bold);
+            TextAt(g,now.ToString("yyyy年MM月dd日")+"  "+ChineseDate.Weekday(now),20,61,21,Color.White,"Microsoft YaHei UI",FontStyle.Regular);
+            TextAt(g,ChineseDate.Lunar(now),20,91,18,Color.LightCyan,"Microsoft YaHei UI",FontStyle.Regular);
+            }
+            var petBounds=new RectangleF(0,124,480,690);
+            if(customArt!=null) {var clip=g.Save();g.SetClip(petBounds);float fit=Math.Max(petBounds.Width/customArt.Width,petBounds.Height/customArt.Height);g.DrawImage(customArt,petBounds.X+(petBounds.Width-customArt.Width*fit)/2,petBounds.Y,customArt.Width*fit,customArt.Height*fit);g.Restore(clip);}
+            else if(petVideo.Available){petVideo.Enabled=animation.Enabled;petVideo.Draw(g,petBounds,petRules,animation.Effects);}
+            else if(animation.Available)animation.Draw(g,petBounds,companion.Busy,companion.Running,reading.CpuTemp>=80);
+            using(var edge=new Pen(Color.FromArgb(140,100,220,255),2))g.DrawRectangle(edge,1,125,478,688);
+            var caption=g.Save();g.TranslateTransform(0,124);DrawSubtitle(g,480,690,0,true);g.Restore(caption);
+            if(repaintDashboard) {
+            PortraitCompute(g,false,826);PortraitCompute(g,true,1040);
+            PortraitMetric(g,12,1254,"POWER · CPU + GPU",Value(reading.ComponentPower," W"),"CPU "+Value(reading.CpuPower," W")+"  GPU "+Value(reading.GpuPower," W"));
+            PortraitMetric(g,246,1254,"MEMORY",Value(reading.Memory,"%"),"可用 "+reading.FreeMemory+" MB");
+            PortraitMetric(g,12,1468,"NETWORK",Rate(reading.Upload),"下载 "+Rate(reading.Download));
+            PortraitMetric(g,246,1468,"VRAM",Value(reading.VramPercent,"%"),"刷新率 "+RefreshRate()+" HZ");
+            using(var b=new SolidBrush(Color.FromArgb(90,17,25,43)))g.FillRectangle(b,12,1682,456,122);
+            DrawWeatherIcon(g,22,1699,weather!=null&&weather.IsCurrent?weather.Code:-1);
+            string summary=weather==null?settings.WeatherName+" · 天气正在连接…":weather.Summary();
+            using(var f=new Font("Microsoft YaHei UI",22,GraphicsUnit.Pixel))using(var b=new SolidBrush(Color.White))g.DrawString(summary,f,b,new RectangleF(52,1695,402,102));
+            string quotaText=!activityEnabled?"Codex · 未启用联动":quota==null?"Codex · 周额度未连接":"Codex 周 "+quota.Remaining.ToString("0")+"%";
+            TextAt(g,quotaText,22,1822,23,Color.LightCyan,"Microsoft YaHei UI",FontStyle.Regular);
+            if(quota!=null&&quota.Reset!=DateTime.MinValue)TextAt(g,quota.Reset.ToLocalTime().ToString("MM-dd HH:mm")+" 重置",22,1857,20,Color.White,"Microsoft YaHei UI",FontStyle.Regular);
+            TextAt(g,"LIVE / "+reading.Timestamp.ToString("HH:mm:ss"),22,1896,13,Color.Silver,"Bahnschrift",FontStyle.Regular);
+            }
+            g.Restore(root);
+        }
+        void PortraitCompute(Graphics g,bool gpu,float y) {
+            Card(g,12,y,456,202);
+            T(g,gpu?"GPU UTILISATION":"CPU UTILISATION",26,y+15,27);
+            Fit(g,gpu?reading.GpuName:reading.CpuName,26,y+50,14,425,"Bahnschrift");
+            Fit(g,Value(gpu?reading.Gpu:reading.Cpu,"%"),30,y+78,87,194,"Impact");
+            Graph(g,new RectangleF(238,y+80,212,40),gpu?gpuHistory:cpuHistory,100);
+            Fit(g,gpu?Value(reading.GpuClock," MHZ"):reading.CpuClock>0?reading.CpuClock.ToString("0.00")+" GHZ":"—",238,y+132,25,190,"Bahnschrift");
+            T(g,"TEMP "+Value(gpu?reading.GpuTemp:reading.CpuTemp,"°"),238,y+171,20);
+        }
+        void PortraitMetric(Graphics g,float x,float y,string label,string value,string detail) {
+            Card(g,x,y,222,202);Fit(g,label,x+14,y+18,21,194,"Bahnschrift");
+            Fit(g,value,x+14,y+64,53,194,"Impact");Fit(g,detail,x+14,y+159,16,194,"Microsoft YaHei UI");
+        }
         static void DrawVideoWindowFrame(Graphics g,int width,int height) {
             float scale=height/480f, leftWidth=width*421f/1110f;
             // A narrow metal window rim overlays only the outermost pixels of the video.
@@ -525,17 +600,66 @@ namespace SideScreenMonitor {
             }
             g.Restore(saved);
         }
-        public void Snapshot(string path) { try { quota=CodexQuota.Fetch(); } catch {quotaFailed=true;} try { weather = WeatherClient.Fetch(settings.WeatherLatitude,settings.WeatherLongitude,settings.WeatherName,settings.WeatherTimeZone); } catch { } reading = sensors.Poll(); Thread.Sleep(1100); reading = sensors.Poll(); lastGood = DateTime.Now; Push(cpuHistory, reading.Cpu); Push(gpuHistory, Math.Max(0, reading.Gpu)); using (var b = new Bitmap(1920, 480)) { using (var g = Graphics.FromImage(b)) Render(g, 1920, 480); b.Save(path, ImageFormat.Png); } var xml = new XElement("Diagnostics", new XElement("CPU", reading.CpuName), new XElement("CPULoad", reading.Cpu), new XElement("CPUTemperature", reading.CpuTemp), new XElement("CPUPackagePower", reading.CpuPower), new XElement("GPU", reading.GpuName), new XElement("GPULoad", reading.Gpu), new XElement("GPUTemperature", reading.GpuTemp), new XElement("GPUPower", reading.GpuPower), new XElement("VRAMUsedMiB", reading.VramUsed), new XElement("VRAMTotalMiB", reading.VramTotal), new XElement("VRAMPercent", reading.VramPercent), new XElement("MemoryLoad", reading.Memory), new XElement("MemorySpec", reading.MemorySpec), new XElement("DiskLoad", reading.Disk), new XElement("Adapter", reading.Adapter), new XElement("UploadBytesPerSecond", reading.Upload), new XElement("DownloadBytesPerSecond", reading.Download), new XElement("Display", PreferredScreen().DeviceName), new XElement("RefreshHz", RefreshRate())); xml.Save(Path.ChangeExtension(path, ".xml")); }
+        public void Snapshot(string path) { try { quota=CodexQuota.Fetch(); } catch {quotaFailed=true;} try { weather = WeatherClient.Fetch(settings.WeatherLatitude,settings.WeatherLongitude,settings.WeatherName,settings.WeatherTimeZone); } catch { } reading = sensors.Poll(); Thread.Sleep(1100); reading = sensors.Poll(); lastGood = DateTime.Now; Push(cpuHistory, reading.Cpu); Push(gpuHistory, Math.Max(0, reading.Gpu)); using (var b = new Bitmap(settings.Portrait?480:1920, settings.Portrait?1920:480)) { using (var g = Graphics.FromImage(b)) Render(g, b.Width, b.Height); b.Save(path, ImageFormat.Png); } var xml = new XElement("Diagnostics", new XElement("CPU", reading.CpuName), new XElement("CPULoad", reading.Cpu), new XElement("CPUTemperature", reading.CpuTemp), new XElement("CPUPackagePower", reading.CpuPower), new XElement("GPU", reading.GpuName), new XElement("GPULoad", reading.Gpu), new XElement("GPUTemperature", reading.GpuTemp), new XElement("GPUPower", reading.GpuPower), new XElement("VRAMUsedMiB", reading.VramUsed), new XElement("VRAMTotalMiB", reading.VramTotal), new XElement("VRAMPercent", reading.VramPercent), new XElement("MemoryLoad", reading.Memory), new XElement("MemorySpec", reading.MemorySpec), new XElement("DiskLoad", reading.Disk), new XElement("Adapter", reading.Adapter), new XElement("UploadBytesPerSecond", reading.Upload), new XElement("DownloadBytesPerSecond", reading.Download), new XElement("Display", PreferredScreen().DeviceName), new XElement("RefreshHz", RefreshRate())); xml.Save(Path.ChangeExtension(path, ".xml")); }
     }
     static class Program {
         [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
         [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr context);
         [DllImport("shcore.dll")] static extern int SetProcessDpiAwareness(int awareness);
+        [DllImport("kernel32.dll",SetLastError=true)] static extern bool IsProcessInJob(IntPtr process,IntPtr job,out bool result);
+        const string InstanceMutex="Local\\NeonSideScreenMonitor";
+        static string QuoteArgument(string value) {
+            var b=new System.Text.StringBuilder("\"");int slashes=0;
+            foreach(char c in value) { if(c=='\\'){slashes++;continue;} if(c=='\"'){b.Append('\\',slashes*2+1);b.Append('\"');slashes=0;continue;} b.Append('\\',slashes);slashes=0;b.Append(c); }
+            b.Append('\\',slashes*2);b.Append('\"');return b.ToString();
+        }
+        static int RunScheduledCommand(string arguments) {
+            var info=new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),"schtasks.exe"),arguments) {UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true};
+            using(var process=Process.Start(info)){string output=process.StandardOutput.ReadToEnd();string error=process.StandardError.ReadToEnd();process.WaitForExit();if(process.ExitCode!=0)File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"detach-status.txt"),DateTime.Now.ToString("s")+" "+output+" "+error);return process.ExitCode;}
+        }
+        static bool StartOutsideCodexJob() {
+            string exe=Process.GetCurrentProcess().MainModule.FileName;
+            string task="AuxDash.DetachedRuntime";
+            // Keep the one-shot trigger in the past. /Run starts it immediately, while
+            // closing the app later will not let a still-pending trigger reopen it.
+            DateTime trigger=DateTime.Now.AddMinutes(-2);
+            string xmlPath=Path.Combine(Path.GetTempPath(),"AuxDash-DetachedRuntime-"+Guid.NewGuid().ToString("N")+".xml");
+            string user=Environment.UserDomainName+"\\"+Environment.UserName;
+            string escUser=System.Security.SecurityElement.Escape(user),escExe=System.Security.SecurityElement.Escape(exe),escDir=System.Security.SecurityElement.Escape(Path.GetDirectoryName(exe));
+            string xml="<?xml version=\"1.0\" encoding=\"UTF-16\"?>\r\n<Task version=\"1.2\" xmlns=\"http://schemas.microsoft.com/windows/2004/02/mit/task\"><RegistrationInfo><Author>"+escUser+"</Author></RegistrationInfo><Triggers><TimeTrigger><StartBoundary>"+trigger.ToString("yyyy-MM-dd'T'HH:mm:ss",CultureInfo.InvariantCulture)+"</StartBoundary><Enabled>true</Enabled></TimeTrigger></Triggers><Principals><Principal id=\"Author\"><UserId>"+escUser+"</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals><Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><AllowStartOnDemand>true</AllowStartOnDemand><ExecutionTimeLimit>PT0S</ExecutionTimeLimit></Settings><Actions Context=\"Author\"><Exec><Command>"+escExe+"</Command><Arguments>--handoff</Arguments><WorkingDirectory>"+escDir+"</WorkingDirectory></Exec></Actions></Task>";
+            try {
+                File.WriteAllText(xmlPath,xml,System.Text.Encoding.Unicode);
+                string create=string.Join(" ",new[]{"/Create","/TN",task,"/XML",xmlPath,"/F"}.Select(QuoteArgument));
+                if(RunScheduledCommand(create)!=0)return false;
+            } finally {try{File.Delete(xmlPath);}catch(IOException){}}
+            string run=string.Join(" ",new[]{"/Run","/TN",task}.Select(QuoteArgument));
+            return RunScheduledCommand(run)==0;
+        }
+        static void RunDashboard(bool handoff) {
+            bool first;var mutex=new Mutex(true,InstanceMutex,out first);
+            if(!first && !handoff){mutex.Dispose();MessageBox.Show("副屏监控已在运行，请查看副屏。","副屏监控");return;}
+            if(!first && handoff) {
+                mutex.Dispose();mutex=new Mutex(false,InstanceMutex);
+                while(true){try{if(mutex.WaitOne(1000))break;}catch(AbandonedMutexException){break;}}
+            }
+            using(mutex)Application.Run(new Dashboard(false));
+        }
         [STAThread] static void Main(string[] args) {
             try { if (!SetProcessDpiAwarenessContext(new IntPtr(-4))) SetProcessDpiAwareness(2); } catch { try { SetProcessDpiAwareness(2); } catch { SetProcessDPIAware(); } }
             Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false);
             try { if (args.Length >= 2 && args[0] == "--snapshot") { using (var f = new Dashboard(true)) f.Snapshot(Path.GetFullPath(args[1])); return; }
-                bool first; using (var mutex = new Mutex(true, "Local\\NeonSideScreenMonitor", out first)) { if (!first) { MessageBox.Show("副屏监控已在运行，请查看副屏。", "副屏监控"); return; } Application.Run(new Dashboard(false)); }
+                bool handoff=Array.IndexOf(args,"--handoff")>=0;
+                bool inJob=false;try{IsProcessInJob(Process.GetCurrentProcess().Handle,IntPtr.Zero,out inJob);}catch{}
+                if(inJob && !handoff) {
+                    bool first;using(var mutex=new Mutex(true,InstanceMutex,out first)) {
+                        if(!first){MessageBox.Show("副屏监控已在运行，请查看副屏。","副屏监控");return;}
+                        if(StartOutsideCodexJob())return;
+                        MessageBox.Show("Windows 没有接受独立启动请求，副屏将按当前方式运行。请从文件资源管理器直接启动副屏监控.exe。","独立启动失败",MessageBoxButtons.OK,MessageBoxIcon.Warning);
+                        Application.Run(new Dashboard(false));
+                    }
+                    return;
+                }
+                RunDashboard(handoff);
             } catch (Exception ex) { File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "error.log"), ex.ToString()); MessageBox.Show(ex.Message, "副屏监控启动失败"); }
         }
     }

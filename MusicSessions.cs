@@ -29,4 +29,3 @@ namespace SideScreenMonitor {
   public void Dispose(){disposed=true;if(worker!=null){try{if(!worker.HasExited)worker.Kill();}catch{}worker.Dispose();worker=null;}}
  }
 }
-

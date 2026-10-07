@@ -6,9 +6,10 @@ using System.Drawing.Imaging;
 using System.Collections.Generic;
 namespace SideScreenMonitor {
     public sealed class PetVideo : IDisposable {
+        const int FrameWidth=736, FrameHeight=486;
         readonly Stopwatch clock=Stopwatch.StartNew();
         readonly string root=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"assets","video-interactions","frames");
-        Image frame, neutral, idleFrame; string[] idleFiles; int idleIndex=-1; string[] files; int index=-1; double started, lastPlayed=-100; string previous="";
+        Image frame, neutral, idleFrame; string[] idleFiles, idleBaseFiles; string idleFramePath; int idleIndex=-1; string[] files; int index=-1; double started, lastPlayed=-100, actionExitUntil; string previous="";
         public bool Enabled=true, ShowBubbles;
         string codexState="idle";
         public string CodexState {get{return codexState;}set {if(codexState==value)return;codexState=value;
@@ -23,7 +24,7 @@ namespace SideScreenMonitor {
         readonly string actionRoot=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"assets","actions-bedroom");
         readonly Dictionary<string,double> actionTimes=new Dictionary<string,double>();
         string lastWorkClip;
-        string queuedClip,activeClip;int queuedPriority;double idleEpoch;bool modernPlaying,queuedCodex;
+        string queuedClip,activeClip;int queuedPriority;double idleEpoch,idleTransitionUntil;bool modernPlaying,queuedCodex;
         string queuedState,queuedCaptionKey,activeState,activeCaptionKey;
         public string ActiveState {get{return activeState;}}
         public string ActiveCaptionKey {get{return activeCaptionKey;}}
@@ -35,18 +36,19 @@ namespace SideScreenMonitor {
         public string IdleName {get{return idleVariants.Count==0?"default":idleVariants[variantIndex].Name;}}
         public string ActiveClip {get{return activeClip;}}
         public string PendingClip {get{return queuedClip;}}
-        public static string[] ActionNames {get{return new[]{"比心","歪头","抱抱","伸懒腰","打哈欠","喝水","擦汗","跳舞","欢快舞蹈","转圈","读书","游戏陪伴","代码","开会","电量告急","充电","带伞提醒","加衣提醒","内存告急","显存告急","磁盘提醒","网络慢","网络飞速","递本子","点头","摇头","叹气","忙碌","电脑打字","打盹","开心","打招呼","摸鱼","蹦跳庆祝","托腮陪伴","爱心灯","窗边回望","捧杯暖手","舒展手臂","挥手加油","俏皮指挥","空气吉他","偶像应援","兔兔跳","慢歌摇摆","小鼓手","可爱拳击舞","麦克风主唱","优雅谢幕"};}}
+        public static string[] ActionNames {get{return new[]{"比心","歪头","抱抱","伸懒腰","护眼休息","打哈欠","喝水","擦汗","跳舞","欢快舞蹈","转圈","读书","游戏陪伴","代码","开会","电量告急","充电","带伞提醒","加衣提醒","内存告急","显存告急","磁盘提醒","网络慢","网络飞速","递本子","点头","摇头","叹气","忙碌","电脑打字","打盹","开心","打招呼","摸鱼","蹦跳庆祝","托腮陪伴","爱心灯","窗边回望","捧杯暖手","舒展手臂","挥手加油","俏皮指挥","空气吉他","偶像应援","兔兔跳","慢歌摇摆","小鼓手","可爱拳击舞","麦克风主唱","优雅谢幕"};}}
         int observedEvent=-1; double bubbleUntil; string bubble=""; bool night;
-        public PetVideo() { string p=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"assets","video-trial","robot-front.png"); if(File.Exists(p)) using(var im=Image.FromFile(p)) neutral=new Bitmap(im);
+        public PetVideo() { string p=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"assets","video-trial","robot-front.png"); if(File.Exists(p)) neutral=LoadNormalizedFrame(p);
             string fixedRoot=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"assets","idle-v3");
             string bedroom=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"assets","idle-bedroom");
             if(File.Exists(Path.Combine(bedroom,"ready.txt")) && Directory.Exists(Path.Combine(bedroom,"frames"))) {fixedRoot=bedroom;forwardLoop=true;}
             string seamless=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"assets","idle-bedroom-v3");
             if(File.Exists(Path.Combine(seamless,"ready.txt")) && Directory.Exists(Path.Combine(seamless,"frames"))) {fixedRoot=seamless;forwardLoop=true;idleFrameRate=30;}
             completeHeadIdle=Directory.Exists(Path.Combine(fixedRoot,"frames"));
-            if(completeHeadIdle && File.Exists(Path.Combine(fixedRoot,"reference.png"))) {if(neutral!=null)neutral.Dispose();using(var im=Image.FromFile(Path.Combine(fixedRoot,"reference.png")))neutral=new Bitmap(im);}
+            if(completeHeadIdle && File.Exists(Path.Combine(fixedRoot,"reference.png"))) {if(neutral!=null)neutral.Dispose();neutral=LoadNormalizedFrame(Path.Combine(fixedRoot,"reference.png"));}
             string idleFolder=completeHeadIdle?Path.Combine(fixedRoot,"frames"):Path.Combine(root,"tilt");
             if(Directory.Exists(idleFolder)) {idleFiles=Directory.GetFiles(idleFolder,"*.jpg");Array.Sort(idleFiles,StringComparer.Ordinal);}
+            idleBaseFiles=idleFiles;
             if(idleFiles!=null && idleFiles.Length>0)idleVariants.Add(new IdleVariant{Name="待机招手",Files=idleFiles,Fps=idleFrameRate});
             foreach(string id in new[]{"idle-look","idle-hair","idle-sway","idle-core"}) {
                 string folder=Path.Combine(actionRoot,id,"approved-frames");
@@ -56,9 +58,25 @@ namespace SideScreenMonitor {
             }
         }
         public bool Available { get { return neutral!=null; } }
+        static Bitmap LoadNormalizedFrame(string path) {
+            using(var source=Image.FromFile(path)) {
+                var normalized=new Bitmap(FrameWidth,FrameHeight,PixelFormat.Format24bppRgb);
+                using(var g=Graphics.FromImage(normalized)) {
+                    g.CompositingMode=System.Drawing.Drawing2D.CompositingMode.SourceCopy;
+                    g.InterpolationMode=System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                    g.PixelOffsetMode=System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
+                    float scale=Math.Max(FrameWidth/(float)source.Width,FrameHeight/(float)source.Height);
+                    float width=source.Width*scale,height=source.Height*scale;
+                    // Match the existing top-anchored, center-cropped pet viewport.
+                    g.DrawImage(source,(FrameWidth-width)*.5f,0,width,height);
+                }
+                return normalized;
+            }
+        }
         public static string Clip(string state) {
             switch(state) {
             case "蹦跳庆祝":return "daily-happy-hop-haomao";
+            case "护眼休息":return "daily-final-window";
             case "托腮陪伴":return "daily-final-chin";
             case "爱心灯":return "daily-final-heartlight";
             case "窗边回望":return "daily-final-window";
@@ -152,16 +170,28 @@ namespace SideScreenMonitor {
         void AdvanceActions() {
             if(!Enabled)return;
             double now=clock.Elapsed.TotalSeconds;
+            bool neutralBridge=false;
             if(modernPlaying) {
-                if(now-started<(ForwardAction?files.Length/24.0:(files.Length-1)/24.0*2))return;
-                modernPlaying=false;files=null;activeClip=null;activeState=null;activeCaptionKey=null;idleEpoch=now;
+                double duration=ForwardAction?files.Length/24.0:(files.Length-1)/24.0*2/IdleSpeed;
+                if(now-started<duration)return;
+                // Hold the final, neutral-matching action frame during a short crossfade.
+                // Keep `modernPlaying` and its frame list alive until the fade is complete,
+                // so no frame-size/crop jump occurs at the action boundary.
+                modernPlaying=false;idleEpoch=now;actionExitUntil=now+.32;idleTransitionUntil=actionExitUntil;
             }
+            if(actionExitUntil>0 && now>=actionExitUntil) {
+                actionExitUntil=0;files=null;activeClip=null;activeState=null;activeCaptionKey=null;
+                // Resume the moving idle loop from the exact neutral frame used by the fade.
+                if(idleBaseFiles!=null && idleBaseFiles.Length>0) {idleFiles=idleBaseFiles;idleFrameRate=forwardLoop?30:24;idleReturnLoop=false;idleIndex=-1;}
+                idleEpoch=now;
+            }
+            if(idleTransitionUntil>0) {if(now<idleTransitionUntil)return;idleTransitionUntil=0;neutralBridge=true;}
             if(queuedClip==null && codexState=="running")QueueWorkAction();
             if(queuedClip==null)return;
             // Each prepared action begins at the idle reference and returns along its own path.
             double phase=(now-idleEpoch)*IdleSpeed;
             double period=IdlePeriod;
-            if(phase%period>.12 && phase%period<period-.12)return;
+            if(!neutralBridge && phase%period>.12 && phase%period<period-.12)return;
             string folder=Path.Combine(actionRoot,queuedClip,"approved-frames");
             if(!Directory.Exists(folder)){queuedClip=null;return;}
             var next=Directory.GetFiles(folder,"*.jpg");Array.Sort(next,StringComparer.Ordinal);
@@ -175,7 +205,7 @@ namespace SideScreenMonitor {
         }
         public void Observe(PetRules mood) {
             night=mood.Night;
-            if(observedEvent!=mood.EventNumber) {observedEvent=mood.EventNumber; bubble=mood.Message;bubbleUntil=clock.Elapsed.TotalSeconds+3;QueueAction(mood.State,false,30);}
+            if(observedEvent!=mood.EventNumber) {observedEvent=mood.EventNumber; bubble=mood.Message;bubbleUntil=clock.Elapsed.TotalSeconds+3;QueueAction(mood.State,mood.State=="护眼休息",mood.State=="护眼休息"?60:30);}
             Observe(mood.State);
         }
         public void Observe(string state) {
@@ -193,15 +223,24 @@ namespace SideScreenMonitor {
             var panelClip=g.Save();g.SetClip(bounds,System.Drawing.Drawing2D.CombineMode.Intersect);
             g.InterpolationMode=System.Drawing.Drawing2D.InterpolationMode.Bilinear;
             using(var background=new System.Drawing.Drawing2D.LinearGradientBrush(bounds,Color.FromArgb(139,166,193),Color.FromArgb(211,226,239),90f))g.FillRectangle(background,bounds);
-            double speed=night?.85:1;
+            double speed=(modernPlaying && !ForwardAction)?IdleSpeed:(night?.85:1);
             double elapsed=(clock.Elapsed.TotalSeconds-started)*speed;
-            if(modernPlaying)elapsed=clock.Elapsed.TotalSeconds-started;
-            bool playing=Enabled && files!=null && (modernPlaying || elapsed<files.Length/24.0);
-            Image image=neutral; RectangleF source=new RectangleF(0,0,neutral.Width,neutral.Height*(completeHeadIdle?1f:.48f));
-            if(playing) {
+            if(modernPlaying && ForwardAction)elapsed=clock.Elapsed.TotalSeconds-started;
+            if(!modernPlaying && files!=null && actionExitUntil<=0 && elapsed>=files.Length/24.0) {
+                // Legacy clips also use the same neutral crossfade as prepared actions.
+                int last=files.Length-1;
+                if(last>=0 && index!=last)try {var next=LoadNormalizedFrame(files[last]);if(frame!=null)frame.Dispose();frame=next;index=last;}catch(IOException){}
+                actionExitUntil=clock.Elapsed.TotalSeconds+.32;idleTransitionUntil=actionExitUntil;idleEpoch=clock.Elapsed.TotalSeconds;
+            }
+            bool exitingAction=Enabled && actionExitUntil>clock.Elapsed.TotalSeconds && files!=null && frame!=null;
+            bool playing=Enabled && files!=null && (modernPlaying || exitingAction || elapsed<files.Length/24.0);
+            Image image=neutral; RectangleF source=new RectangleF(0,0,neutral.Width,neutral.Height);
+            if(exitingAction) {
+                image=frame;source=new RectangleF(0,0,frame.Width,frame.Height);
+            } else if(playing) {
                 int wanted=modernPlaying && !ForwardAction?ActionFrameAt(elapsed,files.Length):Math.Min(files.Length-1,(int)(elapsed*24));
-                if(index!=wanted) { try { var next=Image.FromFile(files[wanted]);if(frame!=null)frame.Dispose();frame=next;index=wanted; }catch(IOException){} }
-                if(frame!=null) { image=frame;source=new RectangleF(0,0,frame.Width,frame.Height*(modernPlaying?1f:.84f)); }
+                if(index!=wanted) { try { var next=LoadNormalizedFrame(files[wanted]);if(frame!=null)frame.Dispose();frame=next;index=wanted; }catch(IOException){} }
+                if(frame!=null) { image=frame;source=new RectangleF(0,0,frame.Width,frame.Height); }
             }
             // Compensate the dashboard's legacy 1110x314 -> 1920x480 scaling.
             float sx,sy; using(var transform=g.Transform) { var e=transform.Elements;sx=Math.Abs(e[0]);sy=Math.Abs(e[3]); }
@@ -213,21 +252,37 @@ namespace SideScreenMonitor {
                 DrawIdle(g,bounds,target,source);
             } else if(modernPlaying) {
                 g.DrawImage(image,target,source,GraphicsUnit.Pixel);
+            } else if(exitingAction) {
+                double remaining=Math.Max(0,actionExitUntil-clock.Elapsed.TotalSeconds);
+                float opacity=(float)(remaining/.32);
+                opacity=opacity*opacity*(3-2*opacity);
+                var idleSource=new RectangleF(0,0,neutral.Width,neutral.Height);
+                float idleScale=Math.Max(bounds.Width/(idleSource.Width*aspectCorrection),bounds.Height/idleSource.Height);
+                float idleWidth=idleSource.Width*idleScale*aspectCorrection;
+                var idleTarget=new RectangleF(bounds.X+(bounds.Width-idleWidth)/2,bounds.Y,idleWidth,idleSource.Height*idleScale);
+                DrawIdle(g,bounds,idleTarget,idleSource,true);
+                using(var attributes=new ImageAttributes()) {
+                    var matrix=new ColorMatrix();matrix.Matrix33=opacity;attributes.SetColorMatrix(matrix);
+                    g.DrawImage(image,new [] {new PointF(target.Left,target.Top),new PointF(target.Right,target.Top),new PointF(target.Left,target.Bottom)},source,GraphicsUnit.Pixel,attributes);
+                }
             } else {
                 // Soften entry/exit rather than snapping directly between unrelated poses.
                 double duration=files.Length/24.0;
                 float opacity=(float)Math.Min(1,Math.Min(elapsed/.4,(duration-elapsed)/.55));
                 opacity=Math.Max(0,opacity); opacity=opacity*opacity*(3-2*opacity);
-                var idleSource=new RectangleF(0,0,neutral.Width,neutral.Height*(completeHeadIdle?1f:.48f));
+                var idleSource=new RectangleF(0,0,neutral.Width,neutral.Height);
                 float idleScale=Math.Max(bounds.Width/(idleSource.Width*aspectCorrection),bounds.Height/idleSource.Height);
                 float idleWidth=idleSource.Width*idleScale*aspectCorrection;
                 var idleTarget=new RectangleF(bounds.X+(bounds.Width-idleWidth)/2,bounds.Y,idleWidth,idleSource.Height*idleScale);
-                DrawIdle(g,bounds,idleTarget,idleSource);
+                DrawIdle(g,bounds,idleTarget,idleSource,true);
                 using(var attributes=new ImageAttributes()) {
                     var matrix=new ColorMatrix(); matrix.Matrix33=opacity;attributes.SetColorMatrix(matrix);
                     g.DrawImage(image,new [] {new PointF(target.Left,target.Top),new PointF(target.Right,target.Top),new PointF(target.Left,target.Bottom)},source,GraphicsUnit.Pixel,attributes);
                 }
             }
+            // A quiet, real-time breathing cue makes the still idle loop feel alive.
+            // Keep it off action clips so it never competes with their motion.
+            if(!playing && Enabled) DrawIdleLife(g,bounds);
             if(effects) DrawAtmosphere(g,bounds,mood);
             if(forwardLoop && !modernPlaying && CodexState!="idle") DrawCodexLight(g,bounds);
             if(ShowBubbles && clock.Elapsed.TotalSeconds<bubbleUntil && bubble.Length>0) {
@@ -236,6 +291,27 @@ namespace SideScreenMonitor {
                 using(var f=new Font("Microsoft YaHei",11,FontStyle.Regular,GraphicsUnit.Pixel))using(var b=new SolidBrush(Color.White))g.DrawString(bubble,f,b,box);
             }
             g.Restore(panelClip);
+        }
+        void DrawIdleLife(Graphics g,RectangleF b) {
+            double t=clock.Elapsed.TotalSeconds;
+            float breath=(float)(.5+.5*Math.Sin(t*(Math.PI*2/4.8)));
+            float x=b.Left+b.Width*.515f;
+            float y=b.Top+b.Height*.563f+(float)Math.Sin(t*(Math.PI*2/4.8))*1.1f;
+            float rx=15f+2.2f*breath, ry=16f+2.4f*breath;
+            var saved=g.Save();
+            g.SmoothingMode=System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            using(var path=new System.Drawing.Drawing2D.GraphicsPath()) {
+                path.AddEllipse(x-rx,y-ry,rx*2,ry*2);
+                using(var glow=new System.Drawing.Drawing2D.PathGradientBrush(path)) {
+                    glow.CenterColor=Color.FromArgb((int)(18+16*breath),80,225,255);
+                    glow.SurroundColors=new[]{Color.FromArgb(0,80,225,255)};
+                    g.FillPath(glow,path);
+                }
+            }
+            float ring=10.5f+2.2f*breath;
+            using(var pen=new Pen(Color.FromArgb((int)(25+24*breath),130,239,255),1.15f))
+                g.DrawEllipse(pen,x-ring,y-ring,ring*2,ring*2);
+            g.Restore(saved);
         }
         void DrawCodexLight(Graphics g,RectangleF b) {
             // Small light around the core, instead of adding a frame or covering the room.
@@ -311,22 +387,25 @@ namespace SideScreenMonitor {
             double phase=(1-Math.Cos(seconds*Math.PI/5.5))*.5;
             return first+(int)Math.Round((last-first)*phase);
         }
-        void DrawIdle(Graphics g,RectangleF bounds,RectangleF target,RectangleF source) {
+        void DrawIdle(Graphics g,RectangleF bounds,RectangleF target,RectangleF source,bool freezeAtNeutral=false) {
             double t=Enabled?(clock.Elapsed.TotalSeconds-idleEpoch)*IdleSpeed:0;
-            if(Enabled && t>=IdlePeriod && idleVariants.Count>1 && queuedClip==null) {
+            if(!freezeAtNeutral && Enabled && t>=IdlePeriod && idleVariants.Count>1 && queuedClip==null) {
                 variantIndex=NextIdleVariant(variantIndex,idleVariants.Count,idleRandom.Next(10000));
                 var variant=idleVariants[variantIndex];idleFiles=variant.Files;idleFrameRate=variant.Fps;idleReturnLoop=variant.ReturnLoop;
                 idleEpoch=clock.Elapsed.TotalSeconds;idleIndex=-1;t=0;
             }
             Image idle=neutral;
-            if(idleFiles!=null && idleFiles.Length>0) {
-                int wanted=idleReturnLoop?ActionFrameAt(t%IdlePeriod,idleFiles.Length):forwardLoop?(int)(t*idleFrameRate)%idleFiles.Length:completeHeadIdle?(int)Math.Round((idleFiles.Length-1)*(1-Math.Cos(t*Math.PI/5.8))*.5):IdleFrameAt(t,idleFiles.Length);
-                if(idleIndex!=wanted) try {
-                    var next=Image.FromFile(idleFiles[wanted]);if(idleFrame!=null)idleFrame.Dispose();idleFrame=next;
+            string[] drawFiles=freezeAtNeutral && idleBaseFiles!=null && idleBaseFiles.Length>0?idleBaseFiles:idleFiles;
+            if(drawFiles!=null && drawFiles.Length>0) {
+                int wanted=freezeAtNeutral?0:idleReturnLoop?ActionFrameAt(t%IdlePeriod,drawFiles.Length):forwardLoop?(int)(t*idleFrameRate)%drawFiles.Length:completeHeadIdle?(int)Math.Round((drawFiles.Length-1)*(1-Math.Cos(t*Math.PI/5.8))*.5):IdleFrameAt(t,drawFiles.Length);
+                string path=drawFiles[wanted];
+                if(idleFramePath!=path) try {
+                    var next=LoadNormalizedFrame(path);if(idleFrame!=null)idleFrame.Dispose();idleFrame=next;
                     idleIndex=wanted;
+                    idleFramePath=path;
                 }catch(IOException){}
                 if(idleFrame!=null) {
-                    idle=idleFrame;source=new RectangleF(0,0,idle.Width,idle.Height*(completeHeadIdle?1f:.84f));
+                    idle=idleFrame;source=new RectangleF(0,0,idle.Width,idle.Height);
                     float correction;using(var transform=g.Transform){var e=transform.Elements;correction=Math.Abs(e[2])<.001 && Math.Abs(e[0])>.001?Math.Abs(e[3]/e[0]):1;}
                     float scale=Math.Max(bounds.Width/(source.Width*correction),bounds.Height/source.Height);
                     float width=source.Width*scale*correction;

@@ -13,9 +13,10 @@ namespace SideScreenMonitor {
     }
     public sealed class PetRules {
         public bool AutoPerform=true;
+        public bool EyeRestEnabled=true;
         public string State="陪伴", Message="", ColorName="蓝色";
         public Color Accent=Color.DeepSkyBlue;
-        double highCpuSeconds, activeSeconds, previousIdle;
+        double highCpuSeconds, activeSeconds, previousIdle, eyeWorkSeconds, eyeRestSecondsRemaining;
         DateTime previous=DateTime.MinValue, reminderAt=DateTime.MinValue;
         string manual=""; DateTime manualUntil;
         bool overloaded, wasBattery;
@@ -44,6 +45,15 @@ namespace SideScreenMonitor {
             Night=now.Hour>=23 || now.Hour<7;
             double dt=previous==DateTime.MinValue?0:Math.Max(0,Math.Min(5,(now-previous).TotalSeconds)); previous=now;
             highCpuSeconds=s.Cpu>60 ? highCpuSeconds+dt : 0;
+            bool deferEyeRest=s.Game || s.App=="meeting";
+            if(!EyeRestEnabled) { eyeWorkSeconds=0; eyeRestSecondsRemaining=0; }
+            else {
+                if(eyeRestSecondsRemaining>0 && !deferEyeRest) {
+                    eyeRestSecondsRemaining=Math.Max(0,eyeRestSecondsRemaining-dt);
+                    if(eyeRestSecondsRemaining==0)eyeWorkSeconds=0;
+                }
+                if(eyeRestSecondsRemaining<=0 && !deferEyeRest && s.IdleSeconds>=0 && s.IdleSeconds<300)eyeWorkSeconds+=dt;
+            }
             if(highCpuSeconds>=300)working=true;
             recovered=working && s.Cpu<40?recovered+dt:0;
             bool celebrate=working && recovered>=8; if(celebrate)working=false;
@@ -60,6 +70,14 @@ namespace SideScreenMonitor {
             if(s.Memory>85) { Set("内存提醒","内存占用超过 85%。","黄色"); return; }
             if(s.DiskFree<10) { Set("磁盘提醒","系统盘剩余不足 10%。","黄色"); return; }
             if(wasOverloaded && now>=manualUntil) Request("擦汗",now);
+            if(EyeRestEnabled && eyeRestSecondsRemaining<=0 && eyeWorkSeconds>=3600 && !deferEyeRest) {
+                eyeRestSecondsRemaining=300;eyeWorkSeconds=0;
+                Request("护眼休息","眼睛休息 5 分钟，看看远处，放松一下。",now);
+                Set("护眼休息",manualMessage,"绿色");return;
+            }
+            if(EyeRestEnabled && eyeRestSecondsRemaining>0 && !deferEyeRest) {
+                Set("护眼休息","眼睛休息 5 分钟，看看远处，放松一下。","绿色");return;
+            }
             if(celebrate && !s.Game && now>=manualUntil && now>=nextCelebration) {nextCelebration=now.AddMinutes(10);Request("小庆祝","这一阵忙完啦，给你挥挥手！",now);}
             if(wake && now>=manualUntil) Request("打招呼","你回来啦，我一直在。",now);
             if(now<manualUntil) {
